@@ -1,0 +1,32 @@
+# truth(tick) for ticks 0..16 from the flight demo's own functions, 21 October 2026.
+# Program: xorshift and hash copied from mruspace/flight demo/src/main.rs at v0.4.0 (lines 30-37 and 77-87),
+# compute reduced to the fault-free path. Built with rustc 1.86.0 and run on an Apple M4 (macOS).
+#
+# --- truth.rs ---
+const BLOCK_WORDS: usize = 512;
+
+fn xorshift(s: &mut u64) -> u64 {
+    *s ^= *s << 13;
+    *s ^= *s >> 7;
+    *s ^= *s << 17;
+    *s
+}
+#[inline(always)]
+fn hash(block: &[u64; BLOCK_WORDS], after: impl Fn(u64) -> u64) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in block.iter() {
+        for b in 0..8 {
+            h ^= (w >> (8 * b)) & 0xff;
+            h = after(h.wrapping_mul(0x0100_0000_01b3));
+        }
+    }
+    h
+}
+fn compute(block: &mut [u64; BLOCK_WORDS], tick: u64) -> u64 {
+    let mut s = tick.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+    for w in block.iter_mut() { *w = xorshift(&mut s); }
+    hash(block, |h| h)
+}
+fn main() { let mut b = [0u64; BLOCK_WORDS]; for t in 0..16u64 { print!("{}{:#x}", if t>0 {", "} else {""}, compute(&mut b, t)); } println!(); }
+# --- output ---
+0x712be6888391473f, 0x24b9ecfc6360a92d, 0x24f4678811d1d90b, 0x12e01af1d22f3c8f, 0xca4d3112dc90e98e, 0xe9e377d860cd8711, 0x875b156b8d4ce503, 0xd3dd799898649b03, 0x8922f5197653cb41, 0x7912dea9d69f8261, 0xaeb56960b701b8ce, 0x611d6e53ba0b1025, 0xf3496cefb773ed51, 0xad60fd9d5c414ba1, 0xa8227b4cfe5d17fa, 0x75d7b9ccc34f6062

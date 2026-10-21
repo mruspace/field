@@ -1,0 +1,10 @@
+field=0.1.0 quorum=0.4.0 policy=shrink task=target/release/field-demo-task adapter=none input=tick output=none
+cycles=400 delivered=399 detected=1 wrong=0 alive=1 mode=selfcheck last_delivered=400 kat_tests=13
+stopped=completed at_cycle=400 halted_at=never started=2026-10-21T14:36:56Z written=2026-10-21T14:36:57Z
+checkpoint: every=100 resumes=0 last=400 halted=no
+footprint: supervisor_max_rss=2096KiB replica_max_rss=1792KiB cpu=0.028s wall=0.4s
+limits: memory=128MB/process cpu_share=none max_run=none reply_timeout=200ms period=0ms
+faults: injected=3 caught=3 latency_mean=0.0 latency_max=0 (cycles)
+fault: corrupt:2@30 caught=30 latency=0 how=outvoted
+fault: hang:2@60 caught=60 latency=0 how=lost
+fault: stuck:1@120 caught=120 latency=0 how=diagnose

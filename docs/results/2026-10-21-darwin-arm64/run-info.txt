@@ -1,0 +1,3 @@
+# 2026-10-21T14:36:57Z on Darwin arm64, Apple M4, rustc 1.86.0, field 0.1.0 (quorum 0.4.0)
+# command: target/release/field run docs/results/2026-10-21-darwin-arm64/field.conf
+# scenarios.txt and power-cut.txt: ./scripts/scenarios.sh and ./scripts/power-cut.sh on the same machine, same build, 2026-10-21T14:39:32Z.

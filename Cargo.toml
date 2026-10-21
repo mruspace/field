@@ -1,0 +1,29 @@
+[package]
+name = "field"
+description = "Mru Field: a supervisor that runs an operator's task as voted replicas on a hard-to-reach system"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mruspace/field"
+homepage = "https://mru.space"
+publish = false
+default-run = "field"
+
+[[bin]]
+name = "field"
+path = "src/main.rs"
+
+[[bin]]
+name = "field-demo-task"
+path = "tasks/demo/main.rs"
+
+[dependencies]
+quorum = { git = "https://github.com/mruspace/flight", tag = "v0.4.0" }
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[dev-dependencies]
+libc = "0.2"
