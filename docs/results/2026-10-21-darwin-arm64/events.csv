@@ -1,0 +1,9 @@
+cycle,event,detail
+30,injected,corrupt:2
+30,outvoted,2
+60,injected,hang:2
+60,lost,2
+120,injected,stuck:1
+120,retired,1 diagnose
+120,detected,compare
+400,stopped,completed

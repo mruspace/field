@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Unit and integration tests
+        run: cargo test --release
+      - name: Scenario checks
+        run: ./scripts/scenarios.sh
+      - name: Power cuts
+        run: ./scripts/power-cut.sh
+      - name: Version and size
+        run: |
+          uname -sm
+          target/release/field version
+          ls -l target/release/field target/release/field-demo-task
+
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  static:
+    name: static binary (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            platform: linux/arm64
+          - target: armv7-unknown-linux-musleabihf
+            platform: linux/arm/v7
+          - target: x86_64-unknown-linux-musl
+            platform: linux/amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross
+        run: cargo install cross --locked
+      - name: Build fully static binaries
+        run: cross build --release --target ${{ matrix.target }}
+      - uses: docker/setup-qemu-action@v3
+      - name: Scenario checks in a ${{ matrix.platform }} container
+        run: |
+          ls -l target/${{ matrix.target }}/release/field target/${{ matrix.target }}/release/field-demo-task
+          docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/w" -w /w \
+            -e FIELD_BIN=target/${{ matrix.target }}/release/field \
+            -e FIELD_TASK=target/${{ matrix.target }}/release/field-demo-task \
+            -e FIELD_EMULATED=1 alpine:3 \
+            sh -c 'apk add --no-cache procps python3 >/dev/null && uname -m && ./scripts/scenarios.sh'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: field-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/field
+            target/${{ matrix.target }}/release/field-demo-task

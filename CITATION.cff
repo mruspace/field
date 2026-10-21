@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use Mru Field, please cite it as below."
+title: "Mru Field: A Supervisor That Keeps a Hard-to-Reach System Working as Its Software Fails"
+type: software
+authors:
+  - family-names: Binns
+    given-names: Will
+license: Apache-2.0
+repository-code: "https://github.com/mruspace/field"
+url: "https://mru.space"
+version: 0.1.0
+date-released: 2026-10-21
+keywords:
+  - fault tolerance
+  - triple modular redundancy
+  - graceful degradation
+  - ocean observatories
+  - remote systems
+  - Rust
+references:
+  - type: software
+    title: "Mru Flight: Onboard Software That Keeps a Spacecraft Working as Its Computers Fail"
+    authors:
+      - family-names: Binns
+        given-names: Will
+    repository-code: "https://github.com/mruspace/flight"
+  - type: article
+    title: "Mru: A Fault-Tolerant Operating System for Thousand-Year Autonomous Operation"
+    authors:
+      - family-names: Binns
+        given-names: Will
+    year: 2026
+    doi: 10.5281/zenodo.23305299

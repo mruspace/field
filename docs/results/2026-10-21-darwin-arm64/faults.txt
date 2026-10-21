@@ -1,0 +1,4 @@
+# Acceptance 3 on the bench: a corrupted output, a hung replica, a stuck replica.
+corrupt:2@30
+hang:2@60
+stuck:1@120

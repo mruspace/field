@@ -1,0 +1,31 @@
+# Fault schedule for a self-contained pilot: the supervisor runs the demo
+# task and injects these faults into its own replicas on these cycles. The
+# real power cuts come from the system itself and are not in this file; the
+# supervisor resumes from its checkpoint after each one and logs `resumed`.
+#
+# Ported from the OPS-SAT run 2 lifecycle schedule in mruspace/flight
+# (opssat/faults.lifecycle.txt) without the radiation sensor and the stuck
+# bit, which were faults inside the flown task. Each replica fails in a
+# different way and the shrinking quorum goes from three to two to one.
+# Expected course at one cycle per second:
+#   cycle   30  one bit of replica 2's output flipped once: outvoted, logged,
+#               replica 2 stays; its health record takes a strike
+#   cycle   60  replica 2 stops answering (SIGSTOP): lost after the reply
+#               timeout; the run compares replicas 0 and 1
+#   cycle  120  replica 1 returns one fixed wrong value from here on: the two
+#               disagree, the known-answer test names replica 1, it is
+#               retired, and replica 0 self-checks alone
+#   cycle 1280  replica 0 returns the fixed wrong value too: its two
+#               computations still agree, so only the periodic known-answer
+#               test (every 64 cycles; 1280 is one) catches it: retired on
+#               the cycle the fault appears, nothing wrong delivered, and
+#               the run halts with no replica left
+# With `restart_retired = true` the supervisor brings each retired replica
+# back after `cooldown_s` with a fresh process and its known-answer test;
+# the stuck faults are persistent in this file, so replicas 1 and 0 fail
+# their tests again and stay retired, and replica 2 comes back.
+#
+corrupt:2@30
+hang:2@60
+stuck:1@120
+stuck:0@1280
