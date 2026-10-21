@@ -9,7 +9,7 @@
 
 # Mru Field
 
-Software for unattended systems on Earth with no easy repair path: ocean observatories, buoys and moorings, offshore and remote sites, polar and seismic stations. It runs an operator's task as replicas on the system's own processor, delivers only outputs it has checked, retires replicas that fail, keeps going on the ones left, and resumes after a reset or a power cut. Part of [Mru](https://mru.space).
+Software for hard-to-reach systems on Earth: ocean observatories, buoys and moorings, offshore and remote sites, polar and seismic stations, anything that runs for months between visits. It runs an operator's task as replicas on the system's own processor, delivers only outputs it has checked, retires replicas that fail, keeps going on the ones left, and resumes after a reset or a power cut. Part of [Mru](https://mru.space).
 
 **Status (October 2026): planned, not built.** This repository holds the [specification](docs/spec.md) of the Mru Field supervisor. The prototype it grows from is the fault-injection demo in [mruspace/flight](https://github.com/mruspace/flight), which ran on ESA's OPS-SAT PRETTY satellite on 18 October 2026 with a fixed task, and which uses the same proved decision rule. Code lands here after the OPS-SAT run 2 package and before the first deployment, an EMSO ERIC ocean test planned for 2027.
 
