@@ -29,6 +29,12 @@ systemd restarts a process that dies. The supervisor catches a process that is a
 - [docs.mru.space](https://docs.mru.space): the shrinking quorum, what is proved and what is tested
 - [mruspace/dusk](https://github.com/mruspace/dusk): the reliability simulator
 
-## License and trademarks
+## Questions or contributions
 
-Apache License 2.0 ([LICENSE](LICENSE)). Mru and the Mru logo are trademarks of Binns Pte. Ltd. ([TRADEMARK.md](TRADEMARK.md)). Contact: contact@mru.space
+Comments on the specification are welcome as pull requests; see
+[CONTRIBUTING.md](CONTRIBUTING.md). Email [contact@mru.space](mailto:contact@mru.space).
+
+## License
+
+Code under [Apache License 2.0](./LICENSE). The **Mru** name and mark are
+trademarks; see [TRADEMARK.md](./TRADEMARK.md).
