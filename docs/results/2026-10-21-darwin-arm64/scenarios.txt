@@ -9,12 +9,12 @@ ok    shrink delivers at least as much as tmr on ten kill schedules
 ok    hung replica lost at cycle 1000, run continues
 ok    SIGTERM: clean stop, exit 0, no task process left
 ok    max_seconds: stopped at the time limit
-ok    cpu share: cpu=0.121s over wall=3.1s at a 5% cap
+ok    cpu share: cpu=0.290s over wall=8.1s at a 5% cap
 ok    schedule 'kill:3@1' refused with exit 2
 ok    schedule 'burn:0@1' refused with exit 2
 ok    schedule 'stuckbit:0@1/out.0.0' refused with exit 2
 ok    schedule 'kill:0' refused with exit 2
-ok    footprint: supervisor 2352 KiB, replica 1808 KiB
+ok    footprint: supervisor 2416 KiB, replica 1792 KiB
 ok    progress: 20 lines, the last matches the summary
 ok    stuck last replica caught by the periodic test within 64 cycles (faults: injected=1 caught=1 latency_mean=48.0 latency_max=48 (cycles))
 ok    reset: killed after cycle 350, resumed to the same counts, stale line removed, foreign checkpoint refused

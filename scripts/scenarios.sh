@@ -128,7 +128,9 @@ out=$(run "$d"); rm -f "$d/checkpoint"
 grep -q 'stopped=time-limit' "$d/summary.txt" && pass "max_seconds: stopped at the time limit" || fail "max_seconds ($out)"
 
 # 9. CPU share: at 5% the supervisor and its replicas use under 8% of one core.
-conf "$d" "cpu_percent = 5" "max_seconds = 3"
+#    Eight seconds, so the nap that pays for the start-up (seven process
+#    starts and their known-answer tests) fits inside the cap under emulation.
+conf "$d" "cpu_percent = 5" "max_seconds = 8"
 run "$d" >/dev/null; rm -f "$d/checkpoint"
 fp=$(sed -n 5p "$d/summary.txt")
 cpu=$(field cpu "$fp" | tr -d s); wall=$(field wall "$fp" | tr -d s)

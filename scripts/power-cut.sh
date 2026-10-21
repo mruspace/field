@@ -41,7 +41,7 @@ while [ $i -lt 10 ]; do
     j=0
     while [ $j -lt 100 ]; do
         if [ $i = 0 ]; then [ -f "$d/checkpoint" ] && break
-        else [ "$(grep -c ',resumed,' "$d/events.csv" 2>/dev/null || echo 0)" -ge $i ] && break; fi
+        else n=$(grep -c ',resumed,' "$d/events.csv" 2>/dev/null || true); [ "${n:-0}" -ge $i ] && break; fi
         sleep 0.05; j=$((j + 1))
     done
     # then a pause of 0.3 to 1.4 s, different for each cut and each run
