@@ -84,13 +84,13 @@ A checkpoint is written every N cycles and on every cycle in which a replica was
 
 ```
 cut 1 at checkpoint cycle 40
-cut 2 at checkpoint cycle 60
-cut 3 at checkpoint cycle 160
-cut 4 at checkpoint cycle 260
-cut 5 at checkpoint cycle 340
-cut 6 at checkpoint cycle 420
-cut 7 at checkpoint cycle 500
-cut 8 at checkpoint cycle 560
+cut 2 at checkpoint cycle 140
+cut 3 at checkpoint cycle 240
+cut 4 at checkpoint cycle 320
+cut 5 at checkpoint cycle 400
+cut 6 at checkpoint cycle 460
+cut 7 at checkpoint cycle 520
+cut 8 at checkpoint cycle 580
 cut 9 at checkpoint cycle 620
 cut 10 at checkpoint cycle 660
 ok    power cuts: 10 resumes, counts equal an uninterrupted run, retired slots kept, no duplicate events
@@ -103,7 +103,7 @@ That run is in the same results directory. The checkpoint was every 20 cycles an
 | Limit | Default | Scope |
 |---|---|---|
 | Memory per process | 128 MB address space, set in each task process before it starts | Linux |
-| CPU share | `cpu_percent`, by sleeping after each cycle; the wait for a lost replica is not work | all |
+| CPU share | `cpu_percent`, by sleeping after each cycle so the CPU time of the supervisor and all its task processes stays under the share, start-up included | Linux; elsewhere the cycle's wall time stands in for CPU time |
 | Reply timeout | 2,000 ms for the request and the reply; a task that stopped reading cannot block the supervisor on a full pipe | all |
 | Clean stop | SIGTERM: finish the cycle, checkpoint, summary, exit 0, within 200 ms of any wait | all |
 | Replicas, strikes, window | 3, 3, 200: constants of quorum 0.4.0; the configuration refuses other values | version 0.1.0 |

@@ -99,7 +99,7 @@ The periodic test every 64 cycles is configuration (`kat_every`).
 | Limit | Default | How |
 |---|---|---|
 | Memory per process | 128 MB | address-space limit; the supervisor sets it on itself and in each task process before the task starts (Linux) |
-| CPU share of the supervisor | 0, uncapped (5% in the flown demo) | sleep after each cycle so that work takes at most the share; the wait for a lost replica is not work |
+| CPU share of the supervisor | 0, uncapped (5% in the flown demo) | sleep after each cycle so that work takes at most the share, start-up included. Work is the CPU time of the supervisor and all its task processes on Linux (the replicas compute in parallel); elsewhere the wall time of the cycle, less the wait for a lost replica |
 | Reply timeout | 2,000 ms | a replica that is late is lost. The timeout covers the request too: a replica that stopped reading leaves its pipe full, and the supervisor's write gives up at the deadline instead of blocking. The reply deadline for every replica starts after the last request of the cycle was sent, so one blocked send costs the cycle one timeout and costs the healthy replicas nothing |
 | Cycle period | 1,000 ms | the minimum time between cycles; the supervisor never runs faster than the source produces, and `0` is as fast as the source |
 | Run time | unlimited | `max_seconds` and `max_cycles` cap a run for tests and the bench |

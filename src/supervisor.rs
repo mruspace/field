@@ -195,7 +195,7 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
     }
     // the start-up (spawning, the known-answer tests) counts as work under
     // the CPU share, so the whole life of the process stays under it
-    run.throttle(run.start.elapsed(), Duration::ZERO);
+    run.throttle(Some(Duration::ZERO), run.start.elapsed(), Duration::ZERO);
     Ok(run)
 }
 
@@ -463,6 +463,7 @@ impl Run {
         // 7
         let cycle = next_cycle;
         let cycle_start = Instant::now();
+        let cpu_before = self.cpu_used();
         self.last_cycle_start = Some(cycle_start);
         let mut lost_wait = Duration::ZERO;
         let mut flagged = [false; REPLICAS];
@@ -674,20 +675,41 @@ impl Run {
             self.log.flush();
         }
         // 19: CPU share
-        self.throttle(cycle_start.elapsed(), lost_wait);
+        self.throttle(cpu_before, cycle_start.elapsed(), lost_wait);
         Flow::Continue
     }
 
-    /// CPU share: after `work` of computation, sleep so that the work took at
-    /// most `cpu_percent` of the wall time. `lost_wait`, time spent waiting
-    /// for a replica that never answered, is not work. The nap never runs
-    /// past the run-time cap and ends early on a stop.
-    fn throttle(&self, work: Duration, lost_wait: Duration) {
+    /// CPU time used so far by the supervisor, its finished task processes
+    /// and, on Linux, its live ones. `None` where live children cannot be
+    /// read (no /proc); the throttle then falls back to wall time.
+    fn cpu_used(&self) -> Option<Duration> {
+        let (_, own) = summary::usage_of(libc::RUSAGE_SELF);
+        let (_, reaped) = summary::usage_of(libc::RUSAGE_CHILDREN);
+        let mut total = own + reaped;
+        for r in self.replicas.iter().flatten().chain(self.oracle.iter()) {
+            if let Some(pid) = r.pid() {
+                total += proc_cpu(pid)?;
+            }
+        }
+        Some(Duration::from_secs_f64(total))
+    }
+
+    /// CPU share: after a cycle's work, sleep so that the work took at most
+    /// `cpu_percent` of the wall time. The work is CPU time of every process
+    /// where it can be measured, since the replicas compute in parallel;
+    /// else the wall time of the cycle without `lost_wait`, the time spent
+    /// waiting for a replica that never answered. The nap never runs past
+    /// the run-time cap and ends early on a stop.
+    fn throttle(&self, cpu_before: Option<Duration>, wall: Duration, lost_wait: Duration) {
         let p = self.cfg.cpu_percent;
         if p <= 0.0 || p >= 100.0 {
             return;
         }
-        let mut nap = work.saturating_sub(lost_wait).mul_f64((100.0 - p) / p);
+        let work = match (cpu_before, self.cpu_used()) {
+            (Some(before), Some(now)) => now.saturating_sub(before),
+            _ => wall.saturating_sub(lost_wait),
+        };
+        let mut nap = work.mul_f64((100.0 - p) / p);
         if let Some(d) = self.deadline {
             nap = nap.min(d.saturating_duration_since(Instant::now()));
         }
@@ -725,4 +747,24 @@ impl Run {
         print!("{text}");
         code
     }
+}
+
+/// CPU seconds (user and system) of a live process from /proc, Linux only.
+#[cfg(target_os = "linux")]
+fn proc_cpu(pid: libc::pid_t) -> Option<f64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // fields after the ")" that closes the command name: state is the first,
+    // utime and stime are the twelfth and thirteenth
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut f = rest.split_whitespace();
+    let utime: f64 = f.nth(11)?.parse().ok()?;
+    let stime: f64 = f.next()?.parse().ok()?;
+    // SAFETY: sysconf has no preconditions.
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    Some((utime + stime) / ticks)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn proc_cpu(_: libc::pid_t) -> Option<f64> {
+    None
 }
