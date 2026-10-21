@@ -79,7 +79,7 @@ fn a_halt_is_kept_across_a_restart() {
 /// the run leaves its halt.
 #[test]
 fn restarts_bring_a_retired_replica_back() {
-    let r = Run::new("restart", "max_cycles = 200\nperiod_ms = 1\nrestart_retired = true\ncooldown_s = 1\n");
+    let r = Run::new("restart", "max_cycles = 200\nperiod_ms = 1\nrestart_retired = true\ncooldown_s = 5\n");
     let f = r.write_faults("kill:0@10\nkill:1@20\nhang:2@30\n");
     std::fs::write(
         &r.conf,

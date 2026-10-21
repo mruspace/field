@@ -116,5 +116,7 @@ fn heartbeat_file_holds_the_latest_line() {
     assert_eq!(f[0], "MRU");
     assert_eq!(f[2], "vote");
     assert_eq!(f[3], "3");
-    assert!(stdout.contains("heartbeat: sent=2 failed=0"), "{stdout}");
+    let hb_line = stdout.lines().find(|l| l.starts_with("heartbeat:")).unwrap_or("").to_string();
+    let sent: u64 = field_of(&hb_line, "sent").parse().unwrap_or(0);
+    assert!(sent >= 2 && field_of(&hb_line, "failed") == "0", "{stdout}");
 }

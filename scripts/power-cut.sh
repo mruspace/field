@@ -29,12 +29,23 @@ conf 0
 want=$("$F" run "$d/field.conf" | sed -n 2p)
 rm -f "$d/checkpoint" "$d/out" "$d/events.csv"
 
-conf 1
+# ten cuts over at most 15 s of pauses; at 10 ms per cycle the run cannot
+# reach its 3000 cycles before the tenth cut
+conf 10
 i=0
 while [ $i -lt 10 ]; do
     "$F" run "$d/field.conf" >/dev/null & pid=$!
-    # a random pause of 0.3 to 1.5 s
-    sleep "0.$(( (i * 7919 + $$) % 12 + 3 ))"
+    # wait until this start is durable: the first checkpoint of a fresh run,
+    # or the checkpoint a resume writes at once (its `resumed` line is in the
+    # synced log by then); a cut before that leaves nothing to resume
+    j=0
+    while [ $j -lt 100 ]; do
+        if [ $i = 0 ]; then [ -f "$d/checkpoint" ] && break
+        else [ "$(grep -c ',resumed,' "$d/events.csv" 2>/dev/null || echo 0)" -ge $i ] && break; fi
+        sleep 0.05; j=$((j + 1))
+    done
+    # then a pause of 0.3 to 1.4 s, different for each cut and each run
+    sleep "$(awk -v n=$(( (i * 7919 + $$) % 12 )) 'BEGIN { printf "%.1f", 0.3 + n / 10 }')"
     kill -KILL "$pid"; wait "$pid" 2>/dev/null || true
     pkill -f "$T" 2>/dev/null || true
     sleep 0.2

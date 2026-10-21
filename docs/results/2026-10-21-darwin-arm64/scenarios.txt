@@ -9,19 +9,19 @@ ok    shrink delivers at least as much as tmr on ten kill schedules
 ok    hung replica lost at cycle 1000, run continues
 ok    SIGTERM: clean stop, exit 0, no task process left
 ok    max_seconds: stopped at the time limit
-ok    cpu share: cpu=0.125s over wall=3.1s at a 5% cap
+ok    cpu share: cpu=0.121s over wall=3.1s at a 5% cap
 ok    schedule 'kill:3@1' refused with exit 2
 ok    schedule 'burn:0@1' refused with exit 2
 ok    schedule 'stuckbit:0@1/out.0.0' refused with exit 2
 ok    schedule 'kill:0' refused with exit 2
-ok    footprint: supervisor 2384 KiB, replica 1792 KiB
+ok    footprint: supervisor 2352 KiB, replica 1808 KiB
 ok    progress: 20 lines, the last matches the summary
 ok    stuck last replica caught by the periodic test within 64 cycles (faults: injected=1 caught=1 latency_mean=48.0 latency_max=48 (cycles))
-ok    reset: killed after cycle 200, resumed to the same counts, stale line removed, foreign checkpoint refused
+ok    reset: killed after cycle 350, resumed to the same counts, stale line removed, foreign checkpoint refused
 ok    hung last replica: lost at once, run halted
 ok    self-check: a flip in one computation is detected; in both it gets through
 ok    outvoted: one line per outvote, a run collapses to one line plus its count
-ok    lost wait is not work: 200 cycles with a hang in 2s at a 5% share
+ok    lost wait is not work: 200 cycles with a hang in 3s at a 5% share
 ok    pilot schedule: halt at 1280, replica 2 back after the cool-down, stuck ones stay retired, wrong=0
 ok    halt kept across a restart: one halted line, resumed as halted, heartbeat says halted
 ok    cli adapter: same 200 outputs as the server protocol

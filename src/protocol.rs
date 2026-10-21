@@ -358,8 +358,9 @@ mod tests {
 
     #[test]
     fn a_signal_does_not_end_the_wait() {
+        let handler: extern "C" fn(libc::c_int) = nothing;
         // SAFETY: a handler that does nothing is async-signal-safe.
-        unsafe { libc::signal(libc::SIGUSR1, nothing as libc::sighandler_t) };
+        unsafe { libc::signal(libc::SIGUSR1, handler as *const () as libc::sighandler_t) };
         let (r, w) = pipe();
         let reader = std::thread::current().id();
         let _ = reader;

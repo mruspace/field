@@ -15,10 +15,12 @@ extern "C" fn on_signal(_: libc::c_int) {
 }
 
 pub fn install_handlers() {
+    let handler: extern "C" fn(libc::c_int) = on_signal;
+    let handler = handler as *const () as libc::sighandler_t;
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe {
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
     }
 }
 

@@ -83,16 +83,16 @@ A checkpoint is written every N cycles and on every cycle in which a replica was
 ```
 
 ```
-cut 1 at checkpoint cycle 40
+cut 1 at checkpoint cycle 60
 cut 2 at checkpoint cycle 80
-cut 3 at checkpoint cycle 120
-cut 4 at checkpoint cycle 160
-cut 5 at checkpoint cycle 560
-cut 6 at checkpoint cycle 800
-cut 7 at checkpoint cycle 1120
-cut 8 at checkpoint cycle 1400
-cut 9 at checkpoint cycle 1620
-cut 10 at checkpoint cycle 1800
+cut 3 at checkpoint cycle 100
+cut 4 at checkpoint cycle 120
+cut 5 at checkpoint cycle 220
+cut 6 at checkpoint cycle 320
+cut 7 at checkpoint cycle 400
+cut 8 at checkpoint cycle 480
+cut 9 at checkpoint cycle 560
+cut 10 at checkpoint cycle 620
 ok    power cuts: 10 resumes, counts equal an uninterrupted run, retired slots kept, no duplicate events
 ```
 

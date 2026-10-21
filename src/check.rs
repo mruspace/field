@@ -53,13 +53,13 @@ pub fn run(cfg: &Config, o: &Options) -> i32 {
     for k in 1..=n {
         let input = match &inputs {
             Some(v) => v[(k - 1) as usize].clone(),
-            None if k % 10 == 0 => k.to_le_bytes().to_vec(),
+            None if crate::supervisor::every(k, 10) => k.to_le_bytes().to_vec(),
             None => {
                 let len = (xorshift(&mut rng) % 256 + 1) as usize;
                 (0..len).map(|_| xorshift(&mut rng) as u8).collect()
             }
         };
-        let flags = if k % 100 == 0 { FLAG_SELF_CHECK } else { 0 };
+        let flags = if crate::supervisor::every(k, 100) { FLAG_SELF_CHECK } else { 0 };
         let one = a.ask(k, flags, &input, &state, limits, timeout);
         let two = b.ask(k, flags, &input, &state, limits, timeout);
         let three = a.ask(k, flags, &input, &state, limits, timeout);

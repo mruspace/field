@@ -24,6 +24,12 @@ use quorum::{decide, Health, Mode, Outcome, Reply, REPLICAS};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// True every `period` cycles. (Written with `checked_rem` so the code
+/// builds on Rust 1.86 and passes the newer `is_multiple_of` lint.)
+pub fn every(cycle: u64, period: u64) -> bool {
+    cycle.checked_rem(period) == Some(0)
+}
+
 pub fn mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Vote => "vote",
@@ -182,6 +188,14 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
         run.oracle_configured = true;
     }
     run.log.flush();
+    // a resume is checkpointed at once, so a second cut before the next
+    // checkpoint cannot erase the `resumed` line and its count
+    if resuming {
+        run.checkpoint();
+    }
+    // the start-up (spawning, the known-answer tests) counts as work under
+    // the CPU share, so the whole life of the process stays under it
+    run.throttle(run.start.elapsed(), Duration::ZERO);
     Ok(run)
 }
 
@@ -258,7 +272,9 @@ impl Run {
                 self.cp.retired_at[i] = Some(now);
                 continue;
             }
-            if now < at + self.cfg.cooldown_s {
+            // whole seconds: strictly after at + cooldown_s is at least
+            // cooldown_s seconds after the retirement, whatever the fractions
+            if now <= at + self.cfg.cooldown_s {
                 continue;
             }
             if self.start_replica(i, "restart").unwrap_or(false) {
@@ -587,7 +603,7 @@ impl Run {
                     }
                 }
             }
-            if mode == Mode::SelfCheck && cycle % self.cfg.kat_every == 0 {
+            if mode == Mode::SelfCheck && every(cycle, self.cfg.kat_every) {
                 for i in 0..REPLICAS {
                     if self.replicas[i].is_none() {
                         continue;
@@ -611,8 +627,7 @@ impl Run {
                 let kind = self
                     .faults
                     .iter()
-                    .filter(|f| f.replica == i && f.cycle <= cycle && f.kind != Kind::Kill)
-                    .next_back()
+                    .rfind(|f| f.replica == i && f.cycle <= cycle && f.kind != Kind::Kill)
                     .map_or(Kind::Corrupt, |f| f.kind);
                 self.cp.caught.push(Caught { kind, replica: i, at, caught: cycle, how: how.to_string() });
                 self.cp.fault_at[i] = None;
@@ -649,26 +664,34 @@ impl Run {
         self.cp.cycle = cycle;
         self.heartbeat_if_due(mode);
         // 17: progress and summary
-        if self.cfg.summary_every > 0 && cycle % self.cfg.summary_every == 0 {
+        if every(cycle, self.cfg.summary_every) {
             self.report();
         }
         // 18: checkpoint, else just hand the log to the kernel
-        if state_changed || cycle % self.cfg.checkpoint_every == 0 {
+        if state_changed || every(cycle, self.cfg.checkpoint_every) {
             self.checkpoint();
         } else {
             self.log.flush();
         }
         // 19: CPU share
-        let p = self.cfg.cpu_percent;
-        if p > 0.0 && p < 100.0 {
-            let work = cycle_start.elapsed().saturating_sub(lost_wait);
-            let mut nap = work.mul_f64((100.0 - p) / p);
-            if let Some(d) = self.deadline {
-                nap = nap.min(d.saturating_duration_since(Instant::now()));
-            }
-            stop::sleep_until(Instant::now() + nap);
-        }
+        self.throttle(cycle_start.elapsed(), lost_wait);
         Flow::Continue
+    }
+
+    /// CPU share: after `work` of computation, sleep so that the work took at
+    /// most `cpu_percent` of the wall time. `lost_wait`, time spent waiting
+    /// for a replica that never answered, is not work. The nap never runs
+    /// past the run-time cap and ends early on a stop.
+    fn throttle(&self, work: Duration, lost_wait: Duration) {
+        let p = self.cfg.cpu_percent;
+        if p <= 0.0 || p >= 100.0 {
+            return;
+        }
+        let mut nap = work.saturating_sub(lost_wait).mul_f64((100.0 - p) / p);
+        if let Some(d) = self.deadline {
+            nap = nap.min(d.saturating_duration_since(Instant::now()));
+        }
+        stop::sleep_until(Instant::now() + nap);
     }
 
     /// Retire a replica mid-cycle (a failed known-answer test).
