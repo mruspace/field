@@ -2,7 +2,7 @@
 
 **Mru™**, **Mru 2049™**, the **Mru** logo (the orbit-M mark), and
 **mru.space™** are
-trademarks of **Binns Pte. Ltd.** ("we," "us," "our").
+trademarks of **Mru Aerospace, Inc.** ("we," "us," "our").
 
 These are unregistered marks, which we identify with the ™ symbol. We use
 **Mru**, the Mru logo, and **mru.space** to identify this project, its
@@ -56,4 +56,4 @@ We're friendly — just reach out:
 
 - Email: [contact@mru.space](mailto:contact@mru.space)
 
-© Binns Pte. Ltd. All trademark rights reserved.
+© Mru Aerospace, Inc. All trademark rights reserved.
