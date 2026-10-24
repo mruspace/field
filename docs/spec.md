@@ -1,6 +1,6 @@
 # Mru Field supervisor: specification
 
-Status: **built, version 0.1.0.** Version 0.2 of this document, 21 October 2026. The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on 18 October 2026 with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
+Status: **built, version 0.1.0.** Version 0.2 of this document, 21 October 2026. The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on 18 and 22 October 2026 with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
 
 Words: a **processor** is one computing unit that runs replicas. A **system** is the deployed equipment (a buoy, a station, a turbine controller). **Hard-to-reach** means a repair visit is slow, costly or impossible; the system may be visited once a year or never. **Hardware** failing means any part of the system failing.
 
@@ -117,7 +117,7 @@ A checkpoint from a different configuration is refused with exit 2, not overwrit
 
 A run that halts keeps its checkpoint with the halt in it. By default the supervisor then idles: no cycles, the heartbeat says `halted`, and a configured restart of a retired replica is the way out. A restart of the process logs `resumed` as halted and idles again. `on_halt = "exit"` ends the process with the summary instead, for a service manager that should see the halt.
 
-The demo's checkpoint was tested with a kill in CI and in the OPS-SAT run 2 package; the board bench with resets and power cuts has not been run yet. The product's checkpoint is tested with ten kills at random cycles in `scripts/power-cut.sh` (acceptance 4).
+The demo's checkpoint was tested with a kill in CI and in orbit, in OPS-SAT run 2 on 22 October 2026 (killed at tick 900, resumed once with the retired replica still retired, 0 wrong); the board bench with resets and power cuts has not been run yet. The product's checkpoint is tested with ten kills at random cycles in `scripts/power-cut.sh` (acceptance 4).
 
 ## 8. What comes out
 
