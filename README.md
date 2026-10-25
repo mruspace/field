@@ -11,7 +11,7 @@
 
 Software for hard-to-reach systems on Earth: ocean observatories, buoys and moorings, offshore and remote sites, polar and seismic stations, anything that runs for months between visits. The supervisor runs an operator's task as three replicas on the system's own processor, feeds every replica the same input, delivers only outputs it has checked, retires replicas that fail, keeps going on the ones left, and resumes after a reset or a power cut. Part of [Mru](https://mru.space).
 
-**Status (21 October 2026): version 0.1.0, built and tested on the bench.** The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on 18 and 22 October 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
+**Status (October 21, 2026): version 0.1.0, built and tested on the bench.** The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on October 18 and 22, 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
 
 ## What it does that a service manager does not
 
