@@ -117,7 +117,7 @@ A checkpoint from a different configuration is refused with exit 2, not overwrit
 
 A run that halts keeps its checkpoint with the halt in it. By default the supervisor then idles: no cycles, the heartbeat says `halted`, and a configured restart of a retired replica is the way out. A restart of the process logs `resumed` as halted and idles again. `on_halt = "exit"` ends the process with the summary instead, for a service manager that should see the halt.
 
-The demo's checkpoint was tested with a kill in CI and in orbit, in OPS-SAT run 2 on October 22, 2026 (killed at tick 900, resumed once with the retired replica still retired, 0 wrong); the board bench with resets and power cuts has not been run yet. The product's checkpoint is tested with ten kills at random cycles in `scripts/power-cut.sh` (acceptance 4).
+The demo's checkpoint was tested with a kill in CI and in orbit, in OPS-SAT run 2 on October 22, 2026 (killed at tick 900, resumed once with the retired replica still retired, 0 wrong). The F´ manager's state file passed the same test in orbit in run 3 on October 28, 2026 (killed at 35 s, restored at cycle 303 with the retired replica still retired, 0 wrong). The board bench with resets and power cuts has not been run yet. The product's checkpoint is tested with ten kills at random cycles in `scripts/power-cut.sh` (acceptance 4).
 
 ## 8. What comes out
 
