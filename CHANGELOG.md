@@ -10,6 +10,10 @@ All notable changes to Mru Field. Versions follow [Semantic Versioning](https://
 - `field-demo-task --bug KIND`: bad builds for the tests (`crash@N`, `hang@N`, `wrong@N`, `every@M`, `kat`).
 - `tests/staged.rs` (6 tests), scenario checks 24 to 26, and `scripts/staged.sh`, which brings each bad build in all at once and by staged update. Results in docs/results/2026-11-14-darwin-arm64.
 
+### Fixed
+
+- `scripts/power-cut.sh` and scenario check 15: a cut on the cycles between the stuck fault and its retirement resumes with the stuck replica, which fails its start-up known-answer test and is retired as `startup`, not `strikes`. The checks now accept either, still exactly once. Seen on the macOS CI runner; the supervisor's behavior is unchanged.
+
 ### Unchanged
 
 - The decision rule: the `quorum` crate from mruspace/flight v0.4.0, unchanged. Staged updates live in the supervisor.

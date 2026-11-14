@@ -209,9 +209,11 @@ cp_cycle=$(sed -n 's/^cycle=//p' "$d/checkpoint")
 printf '%s,lost,0\n' "$((cp_cycle + 10))" >>"$d/events.csv"
 conf "$d" "max_cycles = 2000" "checkpoint_every = 50" "faults = \"$d/faults.txt\""
 got=$(run "$d")
-retired=$(grep -c ',retired,1 strikes$' "$d/events.csv")
+# a kill between the stuck fault and its retirement resumes with the stuck
+# replica, which fails its start-up test instead (`startup`), still once
+retired=$(grep -cE ',retired,1 (strikes|startup)$' "$d/events.csv" || true)
 stale=$(grep -c "^$((cp_cycle + 10)),lost,0$" "$d/events.csv" || true)
-resumed=$(grep -c "^$cp_cycle,resumed,1$" "$d/events.csv")
+resumed=$(grep -c "^$cp_cycle,resumed,1$" "$d/events.csv" || true)
 conf "$d" "max_cycles = 2000" 'policy = "tmr"' "faults = \"$d/faults.txt\""
 if "$F" run "$d/field.conf" >/dev/null 2>&1; then foreign=accepted; else foreign=$?; fi
 if [ "$(counts "$got")" = "$(counts "$want")" ] && [ "$retired" = 1 ] && [ "$stale" = 0 ] && [ "$resumed" = 1 ] && [ "$foreign" = 2 ] &&
