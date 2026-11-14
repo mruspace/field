@@ -1,0 +1,7 @@
+field=0.2.0 quorum=0.4.0 policy=shrink task=target/release/field-demo-task adapter=none input=tick output=none
+cycles=5000 delivered=5000 detected=0 wrong=0 alive=3 mode=vote last_delivered=5000 kat_tests=10
+stopped=completed at_cycle=5000 halted_at=never started=2026-11-14T13:02:30Z written=2026-11-14T13:02:32Z
+checkpoint: every=100 resumes=0 last=5000 halted=no
+footprint: supervisor_max_rss=2480KiB replica_max_rss=1824KiB cpu=0.679s wall=1.5s
+limits: memory=128MB/process cpu_share=none max_run=none reply_timeout=200ms period=0ms
+update: candidate=docs/results/2026-11-14-darwin-arm64/staged/hang-500-staged/new-build.sh builds=old,old,old state=rejected:2:lost@500

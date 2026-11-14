@@ -88,5 +88,5 @@ fn bad_configuration_exits_2() {
     let out = std::process::Command::new(field()).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
     let out = std::process::Command::new(field()).arg("version").output().unwrap();
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("field 0.1.0 (quorum 0.4.0)"));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("field 0.2.0 (quorum 0.4.0)"));
 }

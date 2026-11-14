@@ -1,0 +1,17 @@
+cycle,event,detail
+500,wrong,vote
+1000,wrong,vote repeated 501x cycles 500-1000
+1000,progress,delivered=1000 detected=0 alive=3 wrong=501
+1001,wrong,vote
+2000,wrong,vote repeated 1000x cycles 1001-2000
+2000,progress,delivered=2000 detected=0 alive=3 wrong=1501
+2001,wrong,vote
+3000,wrong,vote repeated 1000x cycles 2001-3000
+3000,progress,delivered=3000 detected=0 alive=3 wrong=2501
+3001,wrong,vote
+4000,wrong,vote repeated 1000x cycles 3001-4000
+4000,progress,delivered=4000 detected=0 alive=3 wrong=3501
+4001,wrong,vote
+5000,wrong,vote repeated 1000x cycles 4001-5000
+5000,progress,delivered=5000 detected=0 alive=3 wrong=4501
+5000,stopped,completed

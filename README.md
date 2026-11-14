@@ -11,11 +11,37 @@
 
 Software for hard-to-reach systems on Earth: ocean observatories, buoys and moorings, offshore and remote sites, polar and seismic stations, anything that runs for months between visits. The supervisor runs an operator's task as three replicas on the system's own processor, feeds every replica the same input, delivers only outputs it has checked, retires replicas that fail, keeps going on the ones left, and resumes after a reset or a power cut. Part of [Mru](https://mru.space).
 
-**Status (October 21, 2026): version 0.1.0, built and tested on the bench.** The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on October 18, 22 and 28, 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
+**Status (November 14, 2026): version 0.2.0, built and tested on the bench.** Version 0.2.0 adds [staged updates](#staged-updates). The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on October 18, 22 and 28, 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
 
 ## What it does that a service manager does not
 
 systemd restarts a process that dies. The supervisor catches a process that is alive and wrong, alive and hung, or restarted from zero after a reset: it runs the task three times on the same input, compares the outputs on every cycle, and steps down from vote to compare to self-check as replicas fail. It runs under systemd; it does not replace it.
+
+## Staged updates
+
+A new build of the task is the one change that reaches every replica at once. Three replicas that all took the same bad build agree on its wrong answer, or all stop together. With `candidate` set to the new build, the supervisor brings it in one slot at a time and keeps the old build as the check until the last slot switches ([section 10](docs/spec.md#10-staged-updates)):
+
+1. Slot 2 runs the new build against two slots on the old build for `candidate_cycles` clean cycles (default 1,000).
+2. Slot 1 takes it for as many again. An output is delivered only if the slot left on the old build gave the same bytes, so two slots on the new build cannot outvote it.
+3. Slot 0 switches, and the log says `updated`.
+
+Until then, one fault of a slot on the new build (wrong, hung, crashed, a failed known-answer test, a disagreement with the old build) takes the new build out of every slot and starts the old build there again.
+
+Each bad build of the demo task on 5,000 cycles, brought in all at once and by staged update (Apple M4, reply timeout 200 ms, [`scripts/staged.sh`](scripts/staged.sh), [results](docs/results/2026-11-14-darwin-arm64/staged/staged.csv)):
+
+| New build | All at once | Staged update |
+|---|---|---|
+| Good | 5,000 delivered, 0 wrong | Updated on cycle 2,000; 5,000 delivered, 0 wrong |
+| Crashes on cycle 500 | All three lost on cycle 500; the run halts | Rejected on cycle 500; 5,000 delivered, 0 wrong, 3 alive |
+| Hangs on cycle 500 | All three lost on cycle 500; the run halts | Rejected on cycle 500; 5,000 delivered, 0 wrong, 3 alive |
+| Wrong from cycle 500 | 4,501 wrong outputs delivered, none flagged | Rejected on cycle 500; 0 wrong |
+| Wrong on 1 input in 97 | 51 wrong outputs delivered | Rejected on cycle 97; 0 wrong |
+| Fails its known-answer test | No replica starts; nothing delivered | Rejected at start; 5,000 delivered, 0 wrong |
+| Crashes on cycle 1,500 (second trial) | All three lost; the run halts | Rejected on cycle 1,500; 4,999 delivered, 1 withheld, 0 wrong |
+| Wrong from cycle 1,500 (second trial) | 3,501 wrong | Rejected on cycle 1,500 by the old build; 1 withheld, 0 wrong |
+| Wrong from cycle 2,500 (after the last switch) | 2,501 wrong | 2,501 wrong: no old build is left to disagree |
+
+The last line is the limit: a bug that first shows after the last switch gets through. A longer trial covers more inputs and more time. The new build must give the same outputs as the old one; an update meant to change outputs is not covered yet.
 
 ## The one design decision
 
@@ -106,9 +132,9 @@ That run is in the same results directory. The checkpoint was every 20 cycles an
 | CPU share | `cpu_percent`, by sleeping after each cycle so the CPU time of the supervisor and all its task processes stays under the share, start-up included | Linux; elsewhere the cycle's wall time stands in for CPU time |
 | Reply timeout | 2,000 ms for the request and the reply; a task that stopped reading cannot block the supervisor on a full pipe | all |
 | Clean stop | SIGTERM: finish the cycle, checkpoint, summary, exit 0, within 200 ms of any wait | all |
-| Replicas, strikes, window | 3, 3, 200: constants of quorum 0.4.0; the configuration refuses other values | version 0.1.0 |
+| Replicas, strikes, window | 3, 3, 200: constants of quorum 0.4.0; the configuration refuses other values | version 0.2.0 |
 
-Known limits, stated next to the claims: three replicas on one processor catch faults in the replicas, not a failure of the processor (a second processor over a link is planned, [section 10](docs/spec.md#10-the-second-processor-later)). On the last replica, a fault that hits both computations alike gets through; only the periodic known-answer test catches a stuck output, after up to `kat_every` cycles. In compare mode, two replicas that disagree and both pass the test lose that cycle, and two that both fail halt the run. Nothing here is qualification evidence.
+Known limits, stated next to the claims: three replicas on one processor catch faults in the replicas, not a failure of the processor (a second processor over a link is planned, [section 11](docs/spec.md#11-the-second-processor-later)). A staged update catches a bad build only while the old build is still running in a slot. On the last replica, a fault that hits both computations alike gets through; only the periodic known-answer test catches a stuck output, after up to `kat_every` cycles. In compare mode, two replicas that disagree and both pass the test lose that cycle, and two that both fail halt the run. Nothing here is qualification evidence.
 
 ## Layout
 
@@ -123,22 +149,23 @@ Known limits, stated next to the claims: three replicas on one processor catch f
 | [tasks/demo](tasks/demo) | The demo task, its known-answer records and a bench configuration |
 | [tasks/pilot/faults.txt](tasks/pilot/faults.txt) | The pilot's fault schedule, with its expected course |
 | [tests](tests), [scripts](scripts) | Integration tests; the scenario checks, the power-cut check, the long bench run |
-| [docs/spec.md](docs/spec.md) | The specification, version 0.2, with what version 0.1.0 does |
+| [docs/spec.md](docs/spec.md) | The specification, version 0.3, with what version 0.2.0 does |
 | [docs/results](docs/results) | The runs the numbers in this file come from |
 
 ## Tests
 
 ```sh
-cargo test --release          # 32 unit tests, 18 integration tests
-./scripts/scenarios.sh        # 23 checks, ported from mruspace/flight where they apply
+cargo test --release          # 34 unit tests, 24 integration tests
+./scripts/scenarios.sh        # 26 checks: 23 ported from mruspace/flight where they apply, 3 on staged updates
 ./scripts/power-cut.sh        # ten kills at random cycles, one resume each
+./scripts/staged.sh           # each bad build, all at once and by staged update
 ```
 
 The scenario checks run in CI on Linux x86_64, Linux ARM64 and macOS, and on static musl builds for aarch64, armv7 and x86_64 under emulation. The flight repository's checks on the radiation sensor and on stuck bits inside the task do not apply here: the task is a black box to the supervisor, and the flight bench measures those.
 
 ## Acceptance
 
-Of the five bench steps in [the specification](docs/spec.md#12-acceptance), four are done in this repository: the scenario checks, the determinism test, the fault schedule, and ten power cuts (with SIGKILL as the cut). The seven-day run on a bench twin is not done; `scripts/soak.sh` starts it.
+Of the six bench steps in [the specification](docs/spec.md#13-acceptance), five are done in this repository: the scenario checks, the determinism test, the fault schedule, ten power cuts (with SIGKILL as the cut), and staged updates. The seven-day run on a bench twin is not done; `scripts/soak.sh` starts it.
 
 ## Related
 

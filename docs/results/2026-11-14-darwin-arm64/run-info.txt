@@ -1,0 +1,6 @@
+# 2026-11-14T13:02Z on Darwin arm64, Apple M4, rustc 1.86.0, field 0.2.0 (quorum 0.4.0)
+# staged/: ./scripts/staged.sh docs/results/2026-11-14-darwin-arm64/staged
+#   each bad build of the demo task (--bug KIND@CYCLE) on 5000 cycles, brought in all at once (task = the new build)
+#   and by staged update (candidate = the new build, candidate_cycles = 1000); reply timeout 200 ms, as fast as the task answers;
+#   the oracle is the old build. staged.csv has one line per run; each directory has the run's field.conf, events.csv and summary.txt.
+# scenarios.txt and power-cut.txt: ./scripts/scenarios.sh and ./scripts/power-cut.sh on the same machine, same build, 2026-11-14T13:03Z to 13:04Z.

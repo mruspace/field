@@ -2,6 +2,23 @@
 
 All notable changes to Mru Field. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.2.0 (2026-11-14)
+
+### Added
+
+- Staged updates (docs/spec.md, section 10). `candidate` names a new build of the task and `candidate_cycles` (default 1000) the clean cycles per trial. The new build comes in one slot at a time: slot 2 against two slots on the old build, then slot 1, where an output is delivered only if the slot left on the old build gave the same bytes, then slot 0. Until the last switch, one fault of a slot on the new build (an outvote, a lost reply, a failed known-answer test, a cycle with no agreement, a disagreement with the old build) rejects it and starts the old build again in every slot that had it. A lost old replica pauses the update until three replicas are alive. The checkpoint keeps the build of each slot, the trial and the candidate's hash, so a resume continues the trial; a changed or removed candidate puts every slot back on the old build. `candidate` events in `events.csv` and an `update:` line in `summary.txt`.
+- `field-demo-task --bug KIND`: bad builds for the tests (`crash@N`, `hang@N`, `wrong@N`, `every@M`, `kat`).
+- `tests/staged.rs` (6 tests), scenario checks 24 to 26, and `scripts/staged.sh`, which brings each bad build in all at once and by staged update. Results in docs/results/2026-11-14-darwin-arm64.
+
+### Fixed
+
+- `scripts/power-cut.sh` and scenario check 15: a cut on the cycles between the stuck fault and its retirement resumes with the stuck replica, which fails its start-up known-answer test and is retired as `startup`, not `strikes`. The checks now accept either, still exactly once. Seen on the macOS CI runner; the supervisor's behavior is unchanged.
+
+### Unchanged
+
+- The decision rule: the `quorum` crate from mruspace/flight v0.4.0, unchanged. Staged updates live in the supervisor.
+- A 0.1.0 checkpoint resumes under 0.2.0 with no update under way.
+
 ## 0.1.0 (2026-10-21)
 
 ### Added

@@ -9,7 +9,13 @@
 //! reads one input record to end of input and writes the output, for the
 //! `cli` adapter. `--kat DIR` writes `kat.in` and `kat.out`. Test switches:
 //! `--nondeterministic` appends the process id to every output;
-//! `--big-state` returns a 100 KiB state record.
+//! `--big-state` returns a 100 KiB state record. `--bug KIND` makes a bad
+//! new build for the staged-update tests (docs/spec.md, section 10), on
+//! ordinary requests (not known-answer tests) of cycle N and later:
+//! `crash@N` exits, `hang@N` stops answering, `wrong@N` flips one bit of
+//! every output, `every@M` flips one bit when the input's tick is a multiple
+//! of M (a bug only some inputs reach), and `kat` gives a wrong answer to
+//! the known-answer test only.
 
 use std::io::{Read, Write};
 
@@ -68,6 +74,53 @@ fn tick_of(input: &[u8]) -> u64 {
 struct Switches {
     nondeterministic: bool,
     big_state: bool,
+    bug: Bug,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bug {
+    None,
+    Crash(u64),
+    Hang(u64),
+    Wrong(u64),
+    Every(u64),
+    Kat,
+}
+
+fn parse_bug(s: &str) -> Bug {
+    let (kind, n) = s.split_once('@').unwrap_or((s, "0"));
+    let n: u64 = n.parse().expect("--bug KIND@N");
+    match kind {
+        "none" => Bug::None,
+        "crash" => Bug::Crash(n),
+        "hang" => Bug::Hang(n),
+        "wrong" => Bug::Wrong(n),
+        "every" if n > 0 => Bug::Every(n),
+        "kat" => Bug::Kat,
+        _ => panic!("--bug: expected none, crash@N, hang@N, wrong@N, every@M or kat"),
+    }
+}
+
+/// Apply the switch's bug to one request's output. Exits or hangs for the
+/// bugs that do.
+fn apply_bug(bug: Bug, req: &protocol::Request, output: &mut [u8]) {
+    let kat = req.flags & protocol::FLAG_KAT != 0;
+    let flip = |o: &mut [u8]| {
+        if let Some(b) = o.first_mut() {
+            *b ^= 1;
+        }
+    };
+    match bug {
+        Bug::None => {}
+        Bug::Kat if kat => flip(output),
+        Bug::Crash(n) if !kat && req.cycle >= n => std::process::exit(101),
+        Bug::Hang(n) if !kat && req.cycle >= n => loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        },
+        Bug::Wrong(n) if !kat && req.cycle >= n => flip(output),
+        Bug::Every(m) if !kat && tick_of(&req.input).checked_rem(m) == Some(0) => flip(output),
+        _ => {}
+    }
 }
 
 fn answer(block: &mut [u64; BLOCK_WORDS], input: &[u8], sw: &Switches) -> Vec<u8> {
@@ -92,6 +145,7 @@ fn main() {
     let sw = Switches {
         nondeterministic: args.iter().any(|a| a == "--nondeterministic"),
         big_state: args.iter().any(|a| a == "--big-state"),
+        bug: args.iter().position(|a| a == "--bug").map_or(Bug::None, |i| parse_bug(&args[i + 1])),
     };
     let mut block = Box::new([0u64; BLOCK_WORDS]);
     let mut stdout = std::io::stdout().lock();
@@ -115,8 +169,13 @@ fn main() {
     let mut stdin = std::io::stdin().lock();
     let mut buf = Vec::new();
     while let Ok(Some(req)) = protocol::read_request(&mut stdin, limits) {
-        let output = answer(&mut block, &req.input, &sw);
-        let second = (req.flags & protocol::FLAG_SELF_CHECK != 0).then(|| answer(&mut block, &req.input, &sw));
+        let mut output = answer(&mut block, &req.input, &sw);
+        apply_bug(sw.bug, &req, &mut output);
+        let second = (req.flags & protocol::FLAG_SELF_CHECK != 0).then(|| {
+            let mut o = answer(&mut block, &req.input, &sw);
+            apply_bug(sw.bug, &req, &mut o);
+            o
+        });
         let resp = protocol::Response { output, state: next_state(&req.state, &sw), second };
         buf.clear();
         protocol::encode_response(&resp, &mut buf);
@@ -172,8 +231,28 @@ mod tests {
     }
 
     #[test]
+    fn bugs_parse_and_spare_the_known_answer_test() {
+        assert_eq!(parse_bug("crash@500"), Bug::Crash(500));
+        assert_eq!(parse_bug("every@97"), Bug::Every(97));
+        assert_eq!(parse_bug("kat"), Bug::Kat);
+        let req = |cycle, flags| protocol::Request { cycle, flags, input: 7u64.to_le_bytes().to_vec(), state: vec![] };
+        let mut o = [0u8; 8];
+        apply_bug(Bug::Wrong(10), &req(9, 0), &mut o);
+        assert_eq!(o[0], 0, "before its cycle");
+        apply_bug(Bug::Wrong(10), &req(10, protocol::FLAG_KAT), &mut o);
+        assert_eq!(o[0], 0, "not on a known-answer test");
+        apply_bug(Bug::Wrong(10), &req(10, 0), &mut o);
+        assert_eq!(o[0], 1);
+        let mut o = [0u8; 8];
+        apply_bug(Bug::Kat, &req(10, 0), &mut o);
+        assert_eq!(o[0], 0);
+        apply_bug(Bug::Kat, &req(10, protocol::FLAG_KAT), &mut o);
+        assert_eq!(o[0], 1);
+    }
+
+    #[test]
     fn state_counts_requests() {
-        let sw = Switches { nondeterministic: false, big_state: false };
+        let sw = Switches { nondeterministic: false, big_state: false, bug: Bug::None };
         assert_eq!(next_state(&[], &sw), 1u64.to_le_bytes());
         assert_eq!(next_state(&41u64.to_le_bytes(), &sw), 42u64.to_le_bytes());
     }

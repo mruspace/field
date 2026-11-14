@@ -1,0 +1,6 @@
+cycle,event,detail
+0,retired,0 startup
+0,retired,1 startup
+0,retired,2 startup
+0,halted,0
+0,stopped,halted

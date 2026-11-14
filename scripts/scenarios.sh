@@ -209,9 +209,11 @@ cp_cycle=$(sed -n 's/^cycle=//p' "$d/checkpoint")
 printf '%s,lost,0\n' "$((cp_cycle + 10))" >>"$d/events.csv"
 conf "$d" "max_cycles = 2000" "checkpoint_every = 50" "faults = \"$d/faults.txt\""
 got=$(run "$d")
-retired=$(grep -c ',retired,1 strikes$' "$d/events.csv")
+# a kill between the stuck fault and its retirement resumes with the stuck
+# replica, which fails its start-up test instead (`startup`), still once
+retired=$(grep -cE ',retired,1 (strikes|startup)$' "$d/events.csv" || true)
 stale=$(grep -c "^$((cp_cycle + 10)),lost,0$" "$d/events.csv" || true)
-resumed=$(grep -c "^$cp_cycle,resumed,1$" "$d/events.csv")
+resumed=$(grep -c "^$cp_cycle,resumed,1$" "$d/events.csv" || true)
 conf "$d" "max_cycles = 2000" 'policy = "tmr"' "faults = \"$d/faults.txt\""
 if "$F" run "$d/field.conf" >/dev/null 2>&1; then foreign=accepted; else foreign=$?; fi
 if [ "$(counts "$got")" = "$(counts "$want")" ] && [ "$retired" = 1 ] && [ "$stale" = 0 ] && [ "$resumed" = 1 ] && [ "$foreign" = 2 ] &&
@@ -307,6 +309,51 @@ cmp -s "$d/out-server" "$d/out-cli" && [ "$(field delivered "$out")" = 200 ] && 
 conf "$d"
 out=$("$F" check-task "$d/field.conf" --requests 10000)
 [ "$out" = "requests=10000 mismatches=0 lost=0" ] && pass "check-task: $out" || fail "check-task: $out"
+
+# 24 to 26. Staged updates (docs/spec.md, section 10). The candidate is the
+# demo task with a --bug switch; the oracle is the old build.
+cand() { printf '#!/bin/sh\nexec "%s" --bug %s\n' "$T" "$1" >"$d/cand.sh"; chmod +x "$d/cand.sh"; }
+upd() { printf '%s\n' "$1" | grep '^update: ' | tr ' ' '\n' | sed -n "s/^$2=//p"; }
+staged() { conf "$d" "max_cycles = 5000" "reply_timeout_ms = 200" "candidate = \"$d/cand.sh\"" "candidate_cycles = 1000"; "$F" run "$d/field.conf"; rm -f "$d/checkpoint"; }
+
+# 24. A good build reaches every slot: two trials of 1000 clean cycles, then
+# the last switch; every output delivered and correct.
+cand none
+out=$(staged)
+l2=$(printf '%s\n' "$out" | sed -n 2p)
+if [ "$(upd "$out" state)" = updated@2000 ] && [ "$(upd "$out" builds)" = new,new,new ] && [ "$(field delivered "$l2")" = 5000 ] && [ "$(field wrong "$l2")" = 0 ]; then
+    pass "staged update, good build: updated at cycle 2000, 5000 delivered, 0 wrong"
+else
+    fail "staged update, good build ($out)"
+fi
+
+# 25. Every bad build is rejected on the cycle its bug first shows, in the
+# first trial (one slot on it) and the second (two slots on it), and every
+# slot goes back to the old build. Nothing wrong is delivered.
+for case in wrong@500:rejected:2:outvoted@500 hang@500:rejected:2:lost@500 crash@500:rejected:2:lost@500 \
+    every@97:rejected:2:outvoted@97 kat:rejected:2:startup@0 \
+    wrong@1500:rejected:1:old-disagrees@1500 hang@1500:rejected:1:lost@1500 crash@1500:rejected:1:lost@1500; do
+    bug=${case%%:*}; want=${case#*:}
+    cand "$bug"
+    out=$(staged)
+    l2=$(printf '%s\n' "$out" | sed -n 2p)
+    if [ "$(upd "$out" state)" = "$want" ] && [ "$(upd "$out" builds)" = old,old,old ] && [ "$(field alive "$l2")" = 3 ] && [ "$(field wrong "$l2")" = 0 ]; then
+        pass "staged update, bad build $bug: $want, all slots back on the old build, 0 wrong"
+    else
+        fail "staged update, bad build $bug ($out)"
+    fi
+done
+
+# 26. The limit: a bug that first shows after the last switch has no old
+# build left to disagree with, and gets through (2501 wrong of 5000).
+cand wrong@2500
+out=$(staged)
+l2=$(printf '%s\n' "$out" | sed -n 2p)
+if [ "$(upd "$out" state)" = updated@2000 ] && [ "$(field wrong "$l2")" = 2501 ]; then
+    pass "staged update, limit: a bug after the last switch gets through (wrong=2501)"
+else
+    fail "staged update, late bug ($out)"
+fi
 
 rm -rf "$d"
 if [ "$fails" -gt 0 ]; then

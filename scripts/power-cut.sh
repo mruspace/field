@@ -58,7 +58,10 @@ got=$("$F" run "$d/field.conf" | sed -n 2p)
 ok=1
 resumes=$(grep -c ',resumed,' "$d/events.csv")
 [ "$resumes" = 10 ] || { ok=0; echo "expected 10 resumed lines, got $resumes"; }
-[ "$(grep -c ',retired,1 strikes$' "$d/events.csv")" = 1 ] || { ok=0; echo "retired,1 not exactly once"; }
+# a cut on the cycles between the stuck fault and its retirement resumes
+# with the stuck replica, which then fails its start-up test: retired as
+# `startup` instead of `strikes`, still exactly once
+[ "$(grep -cE ',retired,1 (strikes|startup)$' "$d/events.csv" || true)" = 1 ] || { ok=0; echo "retired,1 not exactly once"; }
 [ "$(grep -c ',lost,2$' "$d/events.csv")" = 1 ] || { ok=0; echo "lost,2 not exactly once"; }
 [ "$(counts "$got")" = "$(counts "$want")" ] || { ok=0; echo "counts differ: want '$want' got '$got'"; }
 dups=$(grep -v ',progress,' "$d/events.csv" | sort | uniq -d | wc -l | tr -d ' ')

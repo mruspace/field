@@ -1,0 +1,17 @@
+cycle,event,detail
+97,wrong,vote
+970,wrong,vote repeated 10x cycles 97-970
+1000,progress,delivered=1000 detected=0 alive=3 wrong=10
+1067,wrong,vote
+1940,wrong,vote repeated 10x cycles 1067-1940
+2000,progress,delivered=2000 detected=0 alive=3 wrong=20
+2037,wrong,vote
+2910,wrong,vote repeated 10x cycles 2037-2910
+3000,progress,delivered=3000 detected=0 alive=3 wrong=30
+3007,wrong,vote
+3977,wrong,vote repeated 11x cycles 3007-3977
+4000,progress,delivered=4000 detected=0 alive=3 wrong=41
+4074,wrong,vote
+4947,wrong,vote repeated 10x cycles 4074-4947
+5000,progress,delivered=5000 detected=0 alive=3 wrong=51
+5000,stopped,completed
