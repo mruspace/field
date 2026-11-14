@@ -1,6 +1,6 @@
 # Mru Field supervisor: specification
 
-Status: **built, version 0.1.0.** Version 0.2 of this document, October 21, 2026. The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on October 18 and 22, 2026, with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
+Status: **built, version 0.2.0.** Version 0.3 of this document, November 14, 2026. Version 0.2.0 adds staged updates (section 10). The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on October 18 and 22, 2026, with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
 
 Words: a **processor** is one computing unit that runs replicas. A **system** is the deployed equipment (a buoy, a station, a turbine controller). **Hard-to-reach** means a repair visit is slow, costly or impossible; the system may be visited once a year or never. **Hardware** failing means any part of the system failing.
 
@@ -8,14 +8,14 @@ Words: a **processor** is one computing unit that runs replicas. A **system** is
 
 A supervisor for one task on a hard-to-reach system: one that runs for months between visits, where a visit is slow, costly or impossible. The operator writes the task as a function from an input record to an output record. The supervisor runs that task as three replicas, feeds every replica the same input, compares their outputs on every cycle, and delivers only outputs it has checked. When a replica is wrong, hung or dead, the supervisor retires it and goes on with the ones left: vote on three, compare on two, self-check on one. It survives a reset or a power cut by resuming from a checkpoint. It writes a log that says which replica failed, on which cycle, how it was caught, and what the supervisor did.
 
-It runs under the system's service manager (systemd or similar) as one process on one Linux board. A later version runs replicas on a second processor over a link (section 10).
+It runs under the system's service manager (systemd or similar) as one process on one Linux board. A later version runs replicas on a second processor over a link (section 11). A new build of the task comes in by staged update (section 10).
 
 ### What it is not
 
 - **Not a service manager.** systemd restarts a process that dies. The supervisor catches a process that is alive and wrong, alive and hung, or restarted from zero after a reset. The supervisor itself is started by systemd.
 - **Not a scheduler.** cron starts things on time. The supervisor runs one task in cycles and does not decide when other things run.
 - **Not a watchdog.** A hardware watchdog reboots a stuck board. The supervisor runs above the watchdog and resumes after it fires.
-- **Not hardware redundancy, in version 1.** Three replicas on one processor catch software faults and memory faults in the replicas. They do not survive the processor itself failing. That needs a second processor (section 10). Every document says so.
+- **Not hardware redundancy, in version 1.** Three replicas on one processor catch software faults and memory faults in the replicas. They do not survive the processor itself failing. That needs a second processor (section 11). Every document says so.
 
 ## 2. The one design decision: inputs are read once
 
@@ -124,8 +124,8 @@ The demo's checkpoint was tested with a kill in CI and in orbit, in OPS-SAT run 
 All in one output directory the operator configures (`dir`), except the delivered outputs, which go to the output sink:
 
 - **Delivered outputs** to the output sink, in order, with the cycle number. A file or TCP sink gets `cycle` (8 bytes), `length` (4 bytes) and the bytes; a serial sink gets a text line `<cycle>,<bytes>`, so the task keeps its output ASCII there; a command sink runs the program once per output with the bytes on its standard input and `FIELD_CYCLE` in its environment.
-- **`events.csv`**, the event log: `cycle,event,detail`. Events: `outvoted`, `retired` (with why: `strikes`, `diagnose`, `periodic`, `startup`, `restart`), `cleared`, `lost`, `restarted`, `detected` (with the mode, and `bytes` when the hashes agreed and the bytes did not), `wrong` (when a scoring oracle exists, tests only), `halted`, `stopped` (with why), `resumed`, `progress`, `injected` (a scheduled fault, tests only) and `source` (a command source that failed, or a serial line cut at `record_max`). Runs of identical events on consecutive cycles collapse to the first line plus a closing line with the count, so a long run stays small. The file is handed to the kernel after every cycle and synced at every checkpoint.
-- **`summary.txt`**, written every N cycles (`summary_every`), at a halt and at a stop: cycles run, outputs delivered, disagreements detected, replicas alive and the mode, when and why the run stopped, the checkpoint and resume counts, footprint, limits, the heartbeat counts, and for a fault schedule how fast the supervisor reacted to each fault it caught.
+- **`events.csv`**, the event log: `cycle,event,detail`. Events: `outvoted`, `retired` (with why: `strikes`, `diagnose`, `periodic`, `startup`, `restart`), `cleared`, `lost`, `restarted`, `detected` (with the mode, and `bytes` when the hashes agreed and the bytes did not), `wrong` (when a scoring oracle exists, tests only), `halted`, `stopped` (with why), `resumed`, `progress`, `injected` (a scheduled fault, tests only), `source` (a command source that failed, or a serial line cut at `record_max`) and `candidate` (a staged update: `started`, `promoted`, `rejected` with the slot and why, `rolled-back`, `paused`, `updated`, `removed`, `changed`; section 10). Runs of identical events on consecutive cycles collapse to the first line plus a closing line with the count, so a long run stays small. The file is handed to the kernel after every cycle and synced at every checkpoint.
+- **`summary.txt`**, written every N cycles (`summary_every`), at a halt and at a stop: cycles run, outputs delivered, disagreements detected, replicas alive and the mode, when and why the run stopped, the checkpoint and resume counts, footprint, limits, the heartbeat counts, for a fault schedule how fast the supervisor reacted to each fault it caught, and for a staged update the build in each slot and the state of the update (`update: candidate=... builds=old,old,new state=trial:2 clean=417/1000`).
 - **A heartbeat**, optional, one line per period (`heartbeat_every_s`, default one hour) to a file, a serial port or a TCP stream: `MRU,<cycle>,<mode>,<alive>,<delivered>,<detected>,<resumes>`. A file holds the latest line only.
 - **The checkpoint**, `checkpoint`, one `key=value` per line.
 
@@ -169,35 +169,59 @@ max_cycles  = 0                        # 0 is unlimited; tests and the bench
 max_seconds = 0
 faults      = "none"                   # a fault schedule; tests and pilots
 oracle      = "none"                   # a scoring instance of the task; tests
+candidate   = "none"                   # a new build of the task, brought in by staged update
+candidate_cycles = 1000                # clean cycles per trial (section 10)
 ```
 
-The keys that decide results are part of the checkpoint identity (section 7): change one and the run starts fresh after the old checkpoint is moved away.
+The candidate is not part of the checkpoint identity: a staged update must not change results, and it comes in on the running run. The keys that decide results are part of the checkpoint identity (section 7): change one and the run starts fresh after the old checkpoint is moved away.
 
-## 10. The second processor (later)
+## 10. Staged updates
+
+A new build of the task is the one change that reaches every replica: the replicas run the same program, so a bug in the new build is in all three at once. Three replicas that all took the same bad update agree on its wrong answer, or all stop together. Staged updates bring a new build in one slot at a time and keep the old build as the check until the last slot switches.
+
+The operator sets `candidate` to the new build. It must give the same outputs as the old build: a patch, a new compiler, new libraries, a new platform. An update meant to change outputs is out of scope in version 0.2.0 (section 14).
+
+1. **First trial.** When all three replicas are alive, slot 2 stops the old build and starts the candidate, which must pass the known-answer test twice. Slot 2 then votes on every cycle with two slots on the old build.
+2. **Second trial.** After `candidate_cycles` clean cycles, slot 1 takes the candidate the same way. Two slots now run the new build and one runs the old. While the update runs, an output is delivered only if a slot on the old build gave the same bytes, so two slots on the new build can never outvote the old one.
+3. **The last switch.** After `candidate_cycles` more clean cycles, slot 0 takes the candidate (the known-answer test twice). The log says `updated`.
+
+**Zero strikes.** Until the last switch, one fault of any slot on the new build rejects it: an outvote, a lost reply (crash, hang or exit), a failed known-answer test, a cycle with no agreement, or a disagreement with the old build (`old-disagrees`; that cycle is detected and nothing is delivered). A rejection takes the new build out of every slot that has it, starts the old build there again (the known-answer test twice), clears the strikes of the update, and logs `rejected` with the slot and why, then `rolled-back` per slot. The same candidate is not tried again.
+
+**Paused.** If a slot on the old build is lost during the update, the new build is taken out of every slot the same way and the update waits until three replicas are alive again (`paused quorum`). Nothing is delivered on the strength of a slot under test.
+
+**Checkpoint.** The checkpoint keeps the build of each slot, the slot on trial and its clean cycles, an FNV-1a hash of the candidate file, and how the update ended. A resume continues the trial. A changed candidate file, or a configuration with the candidate removed, puts every slot back on the old build at start-up (`changed`, `removed`). To try a rejected candidate again, remove it from the configuration for one start. After `updated`, keep `candidate` set: changing `task` changes the checkpoint identity and starts a fresh run.
+
+**What it does not catch.** A bug that first shows after the last switch has no old build left to disagree with, and gets through (scenario 26). A longer trial covers more inputs and more time; `candidate_cycles` sets it. A false rejection is possible: a fault on the one old slot in the second trial rejects a good build. Staged updates do not add capacity, do not cover a link, and do not change what the task may be used for (section 1).
+
+Measured on the bench (`scripts/staged.sh`, `docs/results/2026-11-14-darwin-arm64/staged/`): each bad build of the demo task, on 5,000 cycles, brought in all at once and by staged update. All at once, a build that crashes or hangs on cycle 500 halts the run on cycle 500, and a build that gives wrong answers from cycle 500 delivers 4,501 wrong outputs that nothing flags. By staged update, every one of those builds is rejected on the cycle its bug first shows, every slot goes back to the old build, three replicas stay alive, and no wrong output is delivered; a rejection in the second trial withholds one cycle.
+
+## 11. The second processor (later)
 
 Version 1 runs on one board. The design keeps the path open: a replica slot may point at a remote replica host over a serial or Ethernet link, the request and response records are the same bytes, and the reply timeout covers the link. In the code every slot talks through one interface with one implementation today, a local process over its standard input and output. With one replica on a second board, a failure of the first processor leaves a replica that can carry the task until the next visit. The supervisor itself is then the single point of failure, and the step after that is two supervisors with a lease. None of this is built; the record format and the configuration are designed so that it can be.
 
-## 11. The first deployment: EMSO W1M3A
+## 12. The first deployment: EMSO W1M3A
 
 The pilot in the EMSO ERIC physical access programme (proposal due October 31, 2026; kick-off March 2027; twelve weeks in the water May to August 2027) deploys one Mru Field node on the W1M3A spar buoy off Genoa, operated by CNR. Node: one industrial Linux board in a DIN-rail case, under 0.25 A at 24 V, on one relay-switched channel that CNR can cut at any time, with an optional one-line heartbeat into the buoy's control system.
 
 What the pilot runs: the supervisor with the self-contained demo task (`field-demo-task`, the flown demo's payload) and the stored fault schedule in `tasks/pilot/faults.txt`, in matched periods under `policy = "shrink"` and `policy = "tmr"`, plus the real power cuts the buoy applies on its own schedule and when the battery runs low. That proves the supervisor survives the environment and the resets, and gives real failure data from a real system. It does not yet run CNR's own acquisition under the supervisor; that is the step after the pilot, and the task interface above is designed so that it can be done without changing the supervisor.
 
-## 12. Acceptance
+## 13. Acceptance
 
 Before any deployment, on the bench:
 
-1. Every scenario check from the flight repository that applies to a supervisor with a black-box task, run against the supervisor with the demo task. **Done:** `scripts/scenarios.sh`, 23 checks, in CI on Linux x86_64, Linux ARM64, macOS and static ARM builds under emulation. The flight checks on the radiation sensor and on stuck bits inside the task do not apply; the flight bench measures those.
+1. Every scenario check from the flight repository that applies to a supervisor with a black-box task, run against the supervisor with the demo task. **Done:** `scripts/scenarios.sh`, 23 checks (26 with the staged-update checks of item 6), in CI on Linux x86_64, Linux ARM64, macOS and static ARM builds under emulation. The flight checks on the radiation sensor and on stuck bits inside the task do not apply; the flight bench measures those.
 2. The operator's task passes the determinism test: the same request twice gives the same response, across 10,000 requests. **Done:** `field check-task`, run on the demo task in the checks.
 3. A fault schedule with a hung replica, a stuck replica and a corrupted output, every event on its cycle, zero wrong outputs delivered where the rule says none. **Done:** `tests/faults.rs` and the scenario checks.
 4. Ten power cuts at random cycles; every resume continues the counts and keeps every retired slot retired; no event in the log twice. **Done:** `scripts/power-cut.sh`, with SIGKILL as the cut; a real power cut on a board is not done.
 5. Seven days unattended on the bench twin with the real cycle period and the real sources, footprint within limits for the whole run. **Not done:** `scripts/soak.sh` starts the run; the bench twin does not exist yet.
+6. Staged updates (section 10): a good build reaches every slot; every kind of bad build (wrong, hung, crashed, wrong on some inputs, failing its known-answer test) is rejected in each trial, with every slot back on the old build and no wrong output delivered; a lost old replica pauses the update; a power cut during a trial resumes it. **Done:** `tests/staged.rs`, scenario checks 24 to 26, and `scripts/staged.sh`.
 
-## 13. Open questions
+## 14. Open questions
 
 - The state record's maximum size: `state_max`, 64 KiB by default, and the state is in the checkpoint. Larger state, or state in a separate file, is open.
 - Whether restarting retired replicas should be on by default after the pilot. Still off; the pilot configuration turns it on, since its schedule retires all three replicas.
 - The heartbeat format CNR prefers. The line above is the proposal; the field order is stable.
+- Updates meant to change outputs. A staged update requires the new build to agree with the old. A build that changes outputs on purpose needs a different check (for example, the new build in a slot whose output is never delivered, judged on liveness and its own known-answer test). Planned, not designed.
 - How a task that needs the time of day gets it: as part of the input record, acquired once, is the proposed answer. A `cmd:` source can prepend it.
 
 ## Sources

@@ -100,6 +100,20 @@ pub fn text(r: &Report) -> String {
             c.period_ms
         ),
     ];
+    if c.candidate.is_some() || cp.candidate.is_some() {
+        let builds: Vec<&str> = cp.builds.iter().map(|b| if *b { "new" } else { "old" }).collect();
+        let state = match (&cp.candidate_result, cp.trial) {
+            (Some(res), _) => res.clone(),
+            (None, Some(t)) => format!("trial:{t} clean={}/{}", cp.trial_clean, c.candidate_cycles),
+            (None, None) if cp.builds.iter().any(|b| *b) => "between-slots".to_string(),
+            (None, None) => "waiting".to_string(),
+        };
+        lines.push(format!(
+            "update: candidate={} builds={} state={state}",
+            c.candidate.as_ref().map_or(none(), |p| p.display().to_string()),
+            builds.join(",")
+        ));
+    }
     if let Some((sent, failed)) = r.heartbeat {
         lines.push(format!("heartbeat: sent={sent} failed={failed}"));
     }

@@ -143,6 +143,12 @@ pub struct Config {
     pub faults: Option<PathBuf>,
     /// Test-only: a fourth, unfaulted instance of the task that scores delivered outputs.
     pub oracle: Option<PathBuf>,
+    /// A new build of the task to bring in by staged update (docs/spec.md,
+    /// section 10): one slot at a time, each on trial against the others.
+    pub candidate: Option<PathBuf>,
+    /// Clean cycles a slot on the candidate must pass before the next slot
+    /// takes it.
+    pub candidate_cycles: u64,
 }
 
 impl Default for Config {
@@ -177,6 +183,8 @@ impl Default for Config {
             max_seconds: 0.0,
             faults: None,
             oracle: None,
+            candidate: None,
+            candidate_cycles: 1000,
         }
     }
 }
@@ -278,6 +286,8 @@ pub fn parse(text: &str) -> Result<Config, String> {
                 "max_seconds" => c.max_seconds = int(key, v)?,
                 "faults" => c.faults = optional_path(v),
                 "oracle" => c.oracle = optional_path(v),
+                "candidate" => c.candidate = optional_path(v),
+                "candidate_cycles" => c.candidate_cycles = int(key, v)?,
                 _ => return Err(format!("unknown key '{key}'")),
             }
             Ok(())
@@ -328,6 +338,12 @@ fn validate(c: &Config) -> Result<(), String> {
             "faults with adapter = cli: kill and hang need a long-lived task process; use adapter = none".into()
         );
     }
+    if c.candidate_cycles == 0 {
+        return Err("candidate_cycles must be at least 1".into());
+    }
+    if c.candidate.is_some() && c.candidate.as_ref() == Some(&c.task) {
+        return Err("candidate is the task itself: point it at the new build".into());
+    }
     if !(0.0..=100.0).contains(&c.cpu_percent) {
         return Err(format!("cpu_percent = {}: expected 0 to 100", c.cpu_percent));
     }
@@ -344,7 +360,9 @@ pub fn load(path: &Path) -> Result<Config, String> {
 /// known-answer records and the fault schedule by content. A checkpoint
 /// resumes only a run with the same identity. Keys that only tune a run
 /// (period, limits, directories, restarts, heartbeat, caps) are left out,
-/// so an operator can retune without losing the run.
+/// so an operator can retune without losing the run. The candidate is left
+/// out too: a staged update must not change results, and it is brought in
+/// on the running run.
 pub fn identity(c: &Config, kat_in: &[u8], kat_out: &[u8], faults_text: Option<&str>) -> u64 {
     let adapter = match c.adapter {
         Adapter::None => "none",
@@ -403,6 +421,8 @@ state_max = 16
 max_cycles = 10
 max_seconds = 2
 oracle = "/opt/field/task"
+candidate = "/opt/field/task-new"
+candidate_cycles = 500
 "#;
 
     #[test]
@@ -417,6 +437,7 @@ oracle = "/opt/field/task"
         assert!(!c.restart_retired);
         assert_eq!(c.heartbeat, Endpoint::None);
         assert_eq!(c.policy, Policy::Shrink);
+        assert_eq!((c.candidate.clone(), c.candidate_cycles), (None, 1000));
     }
 
     #[test]
@@ -435,6 +456,8 @@ oracle = "/opt/field/task"
         assert_eq!(c.max_seconds, 2.0);
         assert_eq!(c.oracle, Some(PathBuf::from("/opt/field/task")));
         assert_eq!(c.faults, None);
+        assert_eq!(c.candidate, Some(PathBuf::from("/opt/field/task-new")));
+        assert_eq!(c.candidate_cycles, 500);
     }
 
     #[test]
@@ -459,6 +482,8 @@ oracle = "/opt/field/task"
             ("task = \"unterminated", "unterminated"),
             ("task =", "empty value"),
             ("just text", "key = value"),
+            ("candidate_cycles = 0", "candidate_cycles"),
+            ("candidate = \"/opt/field/task\"", "the task itself"),
         ] {
             let e = parse(text).unwrap_err();
             assert!(e.contains(needle), "{text}: {e}");
@@ -493,6 +518,8 @@ oracle = "/opt/field/task"
         tuned.max_cycles = 1;
         tuned.max_seconds = 1.0;
         tuned.on_halt = OnHalt::Idle;
+        tuned.candidate = None;
+        tuned.candidate_cycles = 1;
         assert_eq!(id(&tuned), same, "tuning keys change nothing");
         let mut other = base.clone();
         other.policy = Policy::Shrink;

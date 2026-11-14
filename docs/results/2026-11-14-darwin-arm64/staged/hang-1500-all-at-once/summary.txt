@@ -1,0 +1,6 @@
+field=0.2.0 quorum=0.4.0 policy=shrink task=docs/results/2026-11-14-darwin-arm64/staged/hang-1500-all-at-once/new-build.sh adapter=none input=tick output=none
+cycles=1500 delivered=1499 detected=1 wrong=0 alive=0 mode=halted last_delivered=1499 kat_tests=6
+stopped=halted at_cycle=1500 halted_at=1500 started=2026-11-14T13:02:41Z written=2026-11-14T13:02:41Z
+checkpoint: every=100 resumes=0 last=1500 halted=yes
+footprint: supervisor_max_rss=2304KiB replica_max_rss=1824KiB cpu=0.193s wall=0.8s
+limits: memory=128MB/process cpu_share=none max_run=none reply_timeout=200ms period=0ms

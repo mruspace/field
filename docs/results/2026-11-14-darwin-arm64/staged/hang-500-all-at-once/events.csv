@@ -1,0 +1,7 @@
+cycle,event,detail
+500,lost,0
+500,lost,1
+500,lost,2
+500,detected,halted
+500,halted,0
+500,stopped,halted

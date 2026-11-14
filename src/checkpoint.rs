@@ -53,6 +53,18 @@ pub struct Checkpoint {
     pub resumes: u64,
     pub halted: bool,
     pub started_unix: u64,
+    /// Staged update (docs/spec.md, section 10). Which slots run the
+    /// candidate build.
+    pub builds: [bool; REPLICAS],
+    /// FNV-1a hash of the candidate file the update is about; a changed
+    /// file starts the update again from the old build.
+    pub candidate: Option<u64>,
+    /// The slot on trial, and its clean cycles so far.
+    pub trial: Option<usize>,
+    pub trial_clean: u64,
+    /// How the update ended: `rejected:<slot>:<why>@<cycle>` or
+    /// `updated@<cycle>`; `None` while it runs or before it starts.
+    pub candidate_result: Option<String>,
 }
 
 impl Checkpoint {
@@ -79,6 +91,11 @@ impl Checkpoint {
             resumes: 0,
             halted: false,
             started_unix: now_unix,
+            builds: [false; REPLICAS],
+            candidate: None,
+            trial: None,
+            trial_clean: 0,
+            candidate_result: None,
         }
     }
 
@@ -119,6 +136,11 @@ impl Checkpoint {
         s.push_str(&format!("resumes={}\n", self.resumes));
         s.push_str(&format!("halted={}\n", u8::from(self.halted)));
         s.push_str(&format!("started_unix={}\n", self.started_unix));
+        s.push_str(&format!("builds={}\n", list(&self.builds)));
+        s.push_str(&format!("candidate={}\n", self.candidate.map_or("-".into(), |h| format!("{h:016x}"))));
+        s.push_str(&format!("trial={}\n", self.trial.map_or("-".into(), |t| t.to_string())));
+        s.push_str(&format!("trial_clean={}\n", self.trial_clean));
+        s.push_str(&format!("candidate_result={}\n", self.candidate_result.as_deref().unwrap_or("-")));
         s
     }
 
@@ -196,6 +218,22 @@ impl Checkpoint {
             resumes: num(get("resumes")?)?,
             halted: get("halted")? == "1",
             started_unix: num(get("started_unix")?)?,
+            // the staged-update keys are new in 0.2.0: a 0.1.0 checkpoint
+            // has none of them and resumes with no update under way
+            builds: match get("builds") {
+                Some(b) => bools(b)?,
+                None => [false; REPLICAS],
+            },
+            candidate: match get("candidate") {
+                None | Some("-") => None,
+                Some(h) => Some(u64::from_str_radix(h, 16).ok()?),
+            },
+            trial: match get("trial") {
+                None | Some("-") => None,
+                Some(t) => Some(t.parse().ok().filter(|t| *t < REPLICAS)?),
+            },
+            trial_clean: get("trial_clean").map_or(Some(0), num)?,
+            candidate_result: get("candidate_result").filter(|r| *r != "-").map(String::from),
         })
     }
 
@@ -255,6 +293,10 @@ mod tests {
         c.out_len = 240000;
         c.streak = Some(("progress".into(), "delivered=11990 detected=10 alive=2".into(), 12000, 12000, 1));
         c.resumes = 2;
+        c.builds = [false, false, true];
+        c.candidate = Some(0x0123456789abcdef);
+        c.trial = Some(2);
+        c.trial_clean = 417;
         c
     }
 
@@ -272,6 +314,28 @@ mod tests {
         big.state = vec![0xee; 65536];
         big.halted = true;
         assert_eq!(Checkpoint::from_text(&big.to_text()).unwrap(), big);
+        let mut ended = sample();
+        ended.trial = None;
+        ended.candidate_result = Some("rejected:2:outvoted@1234".into());
+        assert_eq!(Checkpoint::from_text(&ended.to_text()).unwrap(), ended);
+    }
+
+    #[test]
+    fn a_checkpoint_from_0_1_0_resumes_with_no_update() {
+        let text = sample().to_text();
+        let old: String = text
+            .lines()
+            .filter(|l| {
+                !["builds=", "candidate=", "trial=", "trial_clean=", "candidate_result="]
+                    .iter()
+                    .any(|k| l.starts_with(k))
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let c = Checkpoint::from_text(&old).unwrap();
+        assert_eq!((c.builds, c.candidate, c.trial, c.trial_clean), ([false; REPLICAS], None, None, 0));
+        assert_eq!(c.candidate_result, None);
+        assert_eq!(c.cycle, 12000);
     }
 
     #[test]

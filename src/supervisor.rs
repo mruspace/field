@@ -6,6 +6,14 @@
 //! compare the agreeing replies byte for byte, deliver one, and keep the
 //! health record. A replica that is wrong, hung or dead is retired. The
 //! decision rule is the flight repository's `quorum` crate, unchanged.
+//!
+//! A staged update (docs/spec.md, section 10) brings a new build of the task
+//! in one slot at a time, and the old build checks every delivered output
+//! until the last switch: first one slot on the new build against two on the
+//! old, then two against one, where the one old slot must agree with every
+//! output delivered. One fault of any slot on the new build, or one
+//! disagreement with the old build, takes the new build out of every slot
+//! and puts the old one back. Only then does the last slot switch.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -21,7 +29,7 @@ use crate::source::{Acquired, Source};
 use crate::stop;
 use crate::summary::{self, Footprint, Report};
 use quorum::{decide, Health, Mode, Outcome, Reply, REPLICAS};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// True every `period` cycles. (Written with `checked_rem` so the code
@@ -73,6 +81,15 @@ struct Run {
     oracle_configured: bool,
 }
 
+/// What ended a staged update's run of clean cycles.
+enum Trial {
+    /// The new build failed: out of every slot, and not tried again.
+    Rejected(usize, String),
+    /// A slot on the old build was lost: the new build is taken out of
+    /// every slot and tried again once three replicas are alive.
+    Paused,
+}
+
 /// Run under a configuration; returns the exit code.
 pub fn run(cfg: Config) -> i32 {
     match start(cfg) {
@@ -101,6 +118,10 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
         None => (None, Vec::new()),
     };
     let identity = crate::config::identity(&cfg, &kat.input, &kat.output, faults_text.as_deref());
+    let candidate_hash = match &cfg.candidate {
+        Some(p) => Some(crate::hash::of(&read_file("candidate", p)?)),
+        None => None,
+    };
 
     std::fs::create_dir_all(&cfg.dir).map_err(|e| (format!("dir {}: {e}", cfg.dir.display()), 1))?;
     let limits = ProcessLimits { memory_mb: cfg.memory_mb };
@@ -169,12 +190,19 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
         alive_at_end: None,
         oracle_configured: false,
     };
+    run.reconcile_candidate(candidate_hash);
     if run.cp.halted {
         run.halted_at = Some(run.cp.cycle);
     } else {
         for i in 0..REPLICAS {
             if run.cp.alive[i] {
                 run.start_replica(i, "startup").map_err(|e| (e, 1))?;
+            }
+        }
+        // a slot on the new build that failed its start-up test
+        if run.updating() {
+            if let Some(i) = (0..REPLICAS).find(|i| run.cp.builds[*i] && !run.cp.alive[*i]) {
+                run.end_trial(Trial::Rejected(i, "startup".into()));
             }
         }
     }
@@ -208,14 +236,23 @@ impl Run {
         self.cfg.policy.quorum()
     }
 
+    /// The build slot `i` runs: the candidate while it is on the new build.
+    fn task_for(&self, i: usize) -> PathBuf {
+        match (&self.cfg.candidate, self.cp.builds[i]) {
+            (Some(c), true) => c.clone(),
+            _ => self.cfg.task.clone(),
+        }
+    }
+
     /// Spawn the task into slot `i` and run its known-answer test twice. On
-    /// a failure the slot is retired. `Err` only when the task cannot be
-    /// started at all.
+    /// a failure the slot is retired. `Err` only when the task (the old
+    /// build) cannot be started at all at start-up.
     fn start_replica(&mut self, i: usize, reason: &str) -> Result<bool, String> {
         let limits = ProcessLimits { memory_mb: self.cfg.memory_mb };
-        let mut r = match Replica::spawn(&self.cfg.task, self.cfg.adapter, limits) {
+        let task = self.task_for(i);
+        let mut r = match Replica::spawn(&task, self.cfg.adapter, limits) {
             Ok(r) => r,
-            Err(e) if reason == "startup" => return Err(format!("task {}: {e}", self.cfg.task.display())),
+            Err(e) if reason == "startup" && !self.cp.builds[i] => return Err(format!("task {}: {e}", task.display())),
             Err(_) => {
                 self.retire_slot(i, reason);
                 return Ok(false);
@@ -284,6 +321,135 @@ impl Run {
             }
         }
         any
+    }
+
+    /// True while a staged update is under way: some slot is on the new
+    /// build and the update has not ended.
+    fn updating(&self) -> bool {
+        self.cp.candidate_result.is_none() && self.cp.builds.iter().any(|b| *b)
+    }
+
+    /// At start-up: match the checkpoint's update to the configured
+    /// candidate. A removed or changed candidate puts every slot back on the
+    /// old build before any replica starts.
+    fn reconcile_candidate(&mut self, hash: Option<u64>) {
+        if self.cp.candidate == hash {
+            return;
+        }
+        let cycle = self.cp.cycle;
+        if self.cp.builds.iter().any(|b| *b) {
+            let why = if hash.is_none() { "removed" } else { "changed" };
+            self.log.event(cycle, "candidate", why);
+        }
+        self.cp.builds = [false; REPLICAS];
+        self.cp.trial = None;
+        self.cp.trial_clean = 0;
+        self.cp.candidate_result = None;
+        self.cp.candidate = hash;
+    }
+
+    /// Put the next slot on the new build, when an update is pending and
+    /// all three replicas are alive. The last slot goes first. A trial needs
+    /// at least one slot left on the old build to check it. True if
+    /// anything changed.
+    fn begin_trial(&mut self) -> bool {
+        let old = self.cp.builds.iter().filter(|b| !**b).count();
+        if self.cfg.candidate.is_none()
+            || self.cp.candidate_result.is_some()
+            || self.cp.trial.is_some()
+            || self.alive() != REPLICAS
+            || old < 2
+        {
+            return false;
+        }
+        let Some(i) = (0..REPLICAS).rev().find(|i| !self.cp.builds[*i]) else { return false };
+        if let Some(r) = self.replicas[i].take() {
+            r.stop(Duration::from_millis(500));
+        }
+        self.cp.builds[i] = true;
+        self.cp.trial_clean = 0;
+        let cycle = self.cp.cycle;
+        if self.start_replica(i, "candidate").unwrap_or(false) {
+            self.cp.trial = Some(i);
+            self.log.event(cycle, "candidate", &format!("started {i}"));
+        } else {
+            self.end_trial(Trial::Rejected(i, "startup".into()));
+        }
+        true
+    }
+
+    /// End the update's current run: take the new build out of every slot
+    /// and start the old build there again (known-answer test twice).
+    fn end_trial(&mut self, how: Trial) {
+        let cycle = self.cp.cycle;
+        match &how {
+            Trial::Rejected(i, why) => {
+                self.log.event(cycle, "candidate", &format!("rejected {i} {why}"));
+                self.cp.candidate_result = Some(format!("rejected:{i}:{why}@{cycle}"));
+            }
+            Trial::Paused => self.log.event(cycle, "candidate", "paused quorum"),
+        }
+        self.cp.trial = None;
+        self.cp.trial_clean = 0;
+        for i in 0..REPLICAS {
+            if !self.cp.builds[i] {
+                continue;
+            }
+            if let Some(r) = self.replicas[i].take() {
+                r.retire();
+            }
+            self.cp.builds[i] = false;
+            // every slot on the new build goes back, a lost one too: what
+            // failed there was the new build
+            if self.start_replica(i, "rollback").unwrap_or(false) {
+                self.log.event(cycle, "candidate", &format!("rolled-back {i}"));
+            }
+        }
+        // strikes earned during the update may come from the new build
+        // (two slots on it outvote the old one), so they are cleared
+        for i in 0..REPLICAS {
+            self.health.clear(i);
+        }
+    }
+
+    /// After a cycle's decision: judge every slot on the new build. `bad`
+    /// is the first such slot that failed this cycle, with how.
+    fn judge_trial(&mut self, bad: Option<(usize, String)>) {
+        if !self.updating() {
+            return;
+        }
+        if let Some((i, why)) = bad {
+            self.end_trial(Trial::Rejected(i, why));
+            return;
+        }
+        if self.alive() < REPLICAS {
+            self.end_trial(Trial::Paused);
+            return;
+        }
+        let Some(t) = self.cp.trial else { return };
+        self.cp.trial_clean += 1;
+        if self.cp.trial_clean < self.cfg.candidate_cycles {
+            return;
+        }
+        let cycle = self.cp.cycle;
+        self.log.event(cycle, "candidate", &format!("promoted {t}"));
+        self.cp.trial = None;
+        self.cp.trial_clean = 0;
+        // one slot left on the old build: the checks are done, switch it
+        let old: Vec<usize> = (0..REPLICAS).filter(|i| !self.cp.builds[*i]).collect();
+        if let [last] = old[..] {
+            if let Some(r) = self.replicas[last].take() {
+                r.stop(Duration::from_millis(500));
+            }
+            self.cp.builds[last] = true;
+            if self.start_replica(last, "candidate").unwrap_or(false) {
+                self.log.event(cycle, "candidate", &format!("promoted {last}"));
+                self.log.event(cycle, "candidate", "updated");
+                self.cp.candidate_result = Some(format!("updated@{cycle}"));
+            } else {
+                self.end_trial(Trial::Rejected(last, "startup".into()));
+            }
+        }
     }
 
     fn checkpoint(&mut self) {
@@ -423,8 +589,11 @@ impl Run {
         if self.cfg.max_cycles > 0 && self.cp.cycle >= self.cfg.max_cycles {
             return Flow::Stop("completed".into(), 0);
         }
-        // 3: restarts
+        // 3: restarts, then the next slot of a staged update
         if self.try_restarts() {
+            self.checkpoint();
+        }
+        if self.begin_trial() {
             self.checkpoint();
         }
         // 4: mode
@@ -544,6 +713,7 @@ impl Run {
         let mut detected_logged = false;
         // 11: the hashes agreed; the bytes must too
         let mut chosen: Option<usize> = None;
+        let mut old_disagrees: Option<usize> = None;
         if let Outcome::Deliver(h) = outcome {
             let first = |r: &Reply| match r {
                 Reply::Single(v) | Reply::Pair(v, _) => Some(*v),
@@ -563,6 +733,19 @@ impl Run {
                 chosen = None;
                 self.log.event(cycle, "detected", &format!("{} bytes", mode_name(verdict.mode)));
                 detected_logged = true;
+            } else if self.updating() {
+                // a staged update: an output is delivered only if a slot on
+                // the old build gave the same bytes, so two slots on the new
+                // build can never outvote the old one
+                let old_agrees =
+                    (0..REPLICAS).any(|i| !self.cp.builds[i] && resps[i].as_ref().is_some_and(|r| same_bytes(r, cr)));
+                if !old_agrees {
+                    outcome = Outcome::Detected;
+                    chosen = None;
+                    self.log.event(cycle, "detected", "update");
+                    detected_logged = true;
+                    old_disagrees = agreeing.iter().copied().find(|i| self.cp.builds[*i]);
+                }
             }
         }
         // 12: dissent
@@ -663,6 +846,25 @@ impl Run {
         }
         // 16
         self.cp.cycle = cycle;
+        // 16a: a staged update. Zero strikes: any fault of a slot on the
+        // new build, while the update runs, rejects it.
+        if self.updating() {
+            let bad = old_disagrees.map(|i| (i, "old-disagrees".to_string())).or_else(|| {
+                (0..REPLICAS).find(|i| self.cp.builds[*i] && flagged[*i]).map(|i| {
+                    let why = if verdict.dissent[i] {
+                        "outvoted"
+                    } else if how[i] != "outvoted" {
+                        how[i]
+                    } else {
+                        "detected"
+                    };
+                    (i, why.to_string())
+                })
+            });
+            let before = (self.cp.trial, self.cp.builds, self.cp.candidate_result.clone());
+            self.judge_trial(bad);
+            state_changed |= before != (self.cp.trial, self.cp.builds, self.cp.candidate_result.clone());
+        }
         self.heartbeat_if_due(mode);
         // 17: progress and summary
         if every(cycle, self.cfg.summary_every) {

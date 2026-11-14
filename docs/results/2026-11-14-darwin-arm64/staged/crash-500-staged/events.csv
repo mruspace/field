@@ -1,0 +1,11 @@
+cycle,event,detail
+0,candidate,started 2
+500,lost,2
+500,candidate,rejected 2 lost
+500,candidate,rolled-back 2
+1000,progress,delivered=1000 detected=0 alive=3 wrong=0
+2000,progress,delivered=2000 detected=0 alive=3 wrong=0
+3000,progress,delivered=3000 detected=0 alive=3 wrong=0
+4000,progress,delivered=4000 detected=0 alive=3 wrong=0
+5000,progress,delivered=5000 detected=0 alive=3 wrong=0
+5000,stopped,completed
