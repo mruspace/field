@@ -118,7 +118,7 @@ fn apply_bug(bug: Bug, req: &protocol::Request, output: &mut [u8]) {
             std::thread::sleep(std::time::Duration::from_secs(3600));
         },
         Bug::Wrong(n) if !kat && req.cycle >= n => flip(output),
-        Bug::Every(m) if !kat && tick_of(&req.input) % m == 0 => flip(output),
+        Bug::Every(m) if !kat && tick_of(&req.input).checked_rem(m) == Some(0) => flip(output),
         _ => {}
     }
 }
