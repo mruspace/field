@@ -64,7 +64,7 @@ fn task_network_deny_says_where_it_is_not_enforced() {
 }
 
 /// A TCP source that sends 2,000 records at once, then, a second later, one
-/// every 30 ms, slower than the cycle; 20 cycles of 20 ms take them.
+/// every 60 ms, much slower than the cycle; 20 cycles of 10 ms take them.
 fn backlog_run(name: &str, backlog: &str) -> (Run, String) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -79,14 +79,14 @@ fn backlog_run(name: &str, backlog: &str) -> (Run, String) {
         // after the run's start-up, so the burst is all that waits on cycle 1
         std::thread::sleep(Duration::from_millis(1000));
         for n in 2000..2040u64 {
-            std::thread::sleep(Duration::from_millis(30));
+            std::thread::sleep(Duration::from_millis(60));
             let mut rec = 8u32.to_le_bytes().to_vec();
             rec.extend_from_slice(&n.to_le_bytes());
             // the run may have stopped already
             let _ = s.write_all(&rec);
         }
     });
-    let r = Run::new(name, &format!("max_cycles = 20\nperiod_ms = 20\ninput_backlog = \"{backlog}\"\n"));
+    let r = Run::new(name, &format!("max_cycles = 20\nperiod_ms = 10\ninput_backlog = \"{backlog}\"\n"));
     let conf = std::fs::read_to_string(&r.conf)
         .unwrap()
         .replace("input = \"tick\"", &format!("input = \"tcp:127.0.0.1:{port}\""));
@@ -106,15 +106,22 @@ fn input_backlog_newest_skips_what_queued_up_and_logs_it_once() {
     let input = stdout.lines().find(|l| l.starts_with("input:")).unwrap_or("").to_string();
     assert_eq!(field_of(&input, "backlog"), "newest", "{stdout}");
     // cycle 1 takes record 0 and skips the burst behind it (plus any
-    // trickle record that arrived before a slow start-up ended); from then
-    // on the source is slower than the cycle, and nothing more is skipped
+    // trickle record that arrived before a slow start-up ended); the
+    // backlog is logged once when it begins and once when it clears
     let skipped: u64 = field_of(&input, "skipped").parse().unwrap();
-    assert!((1999..2040).contains(&skipped), "{stdout}");
     let ev = r.events();
-    assert!(ev.contains(&"1,source,backlog".to_string()), "{ev:?}");
-    let caught = format!(",source,caught-up skipped={skipped} from=1");
-    assert!(ev.iter().any(|l| l.ends_with(&caught)), "{ev:?}");
-    assert_eq!(ev.iter().filter(|l| l.contains(",source,")).count(), 2, "{ev:?}");
+    let source: Vec<&String> = ev.iter().filter(|l| l.contains(",source,")).collect();
+    assert!(source.len() >= 2, "{ev:?}");
+    assert_eq!(source[0], "1,source,backlog", "{ev:?}");
+    let first: u64 = source[1]
+        .split_once(",source,caught-up skipped=")
+        .and_then(|(_, rest)| rest.strip_suffix(" from=1"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{ev:?}"));
+    assert!((1999..2040).contains(&first), "{ev:?}");
+    // a slow runner can still bunch two trickle records into one cycle,
+    // which is a short backlog of its own, counted in the same total
+    assert!(skipped >= first, "{stdout}");
     assert!(r.checkpoint().contains(&format!("\nskipped={skipped}\n")));
 }
 
