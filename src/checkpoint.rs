@@ -65,6 +65,8 @@ pub struct Checkpoint {
     /// How the update ended: `rejected:<slot>:<why>@<cycle>` or
     /// `updated@<cycle>`; `None` while it runs or before it starts.
     pub candidate_result: Option<String>,
+    /// Input records skipped under `input_backlog = newest`.
+    pub skipped: u64,
 }
 
 impl Checkpoint {
@@ -96,6 +98,7 @@ impl Checkpoint {
             trial: None,
             trial_clean: 0,
             candidate_result: None,
+            skipped: 0,
         }
     }
 
@@ -141,6 +144,7 @@ impl Checkpoint {
         s.push_str(&format!("trial={}\n", self.trial.map_or("-".into(), |t| t.to_string())));
         s.push_str(&format!("trial_clean={}\n", self.trial_clean));
         s.push_str(&format!("candidate_result={}\n", self.candidate_result.as_deref().unwrap_or("-")));
+        s.push_str(&format!("skipped={}\n", self.skipped));
         s
     }
 
@@ -234,6 +238,8 @@ impl Checkpoint {
             },
             trial_clean: get("trial_clean").map_or(Some(0), num)?,
             candidate_result: get("candidate_result").filter(|r| *r != "-").map(String::from),
+            // new in 0.3.0: an older checkpoint has skipped nothing
+            skipped: get("skipped").map_or(Some(0), num)?,
         })
     }
 
@@ -297,6 +303,7 @@ mod tests {
         c.candidate = Some(0x0123456789abcdef);
         c.trial = Some(2);
         c.trial_clean = 417;
+        c.skipped = 98123;
         c
     }
 
@@ -336,6 +343,15 @@ mod tests {
         assert_eq!((c.builds, c.candidate, c.trial, c.trial_clean), ([false; REPLICAS], None, None, 0));
         assert_eq!(c.candidate_result, None);
         assert_eq!(c.cycle, 12000);
+    }
+
+    #[test]
+    fn a_checkpoint_from_0_2_0_resumes_with_nothing_skipped() {
+        let text = sample().to_text();
+        let old: String = text.lines().filter(|l| !l.starts_with("skipped=")).map(|l| format!("{l}\n")).collect();
+        let c = Checkpoint::from_text(&old).unwrap();
+        assert_eq!(c.skipped, 0);
+        assert_eq!(c.trial_clean, 417);
     }
 
     #[test]

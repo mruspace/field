@@ -1,0 +1,3 @@
+build,outcome,seconds,stopped,exit
+old,hung (killed at 60 s; the 30 s run cap never ran),60.0,-,killed
+this,ended,7.7,sink-error,1

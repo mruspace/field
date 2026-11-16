@@ -1,0 +1,5 @@
+network,rollout,delivered,wrong,alive,update,datagrams_received
+allow,all-at-once,2000,0,3,-,450300
+allow,staged,2000,0,3,updated@1000,400100
+deny,all-at-once,2000,0,3,-,0
+deny,staged,2000,0,3,updated@1000,0

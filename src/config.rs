@@ -38,6 +38,26 @@ pub enum OnHalt {
     Exit,
 }
 
+/// What the supervisor does with input records that queue up faster than
+/// the cycle takes them (docs/spec.md, section 11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backlog {
+    /// Every record, in order: a backlog waits its turn. The default.
+    Queue,
+    /// The newest complete record: the ones that queued up behind it are
+    /// skipped, counted and logged.
+    Newest,
+}
+
+/// Whether a task process may open a network socket (docs/spec.md,
+/// section 11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskNetwork {
+    /// Only AF_UNIX sockets. The default; enforced on Linux.
+    Deny,
+    Allow,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Adapter {
     None,
@@ -114,6 +134,7 @@ pub struct Config {
     pub task: PathBuf,
     pub adapter: Adapter,
     pub input: Endpoint,
+    pub input_backlog: Backlog,
     pub period_ms: u64,
     pub output: Endpoint,
     pub dir: PathBuf,
@@ -128,6 +149,7 @@ pub struct Config {
     pub restart_retired: bool,
     pub cooldown_s: u64,
     pub memory_mb: u64,
+    pub task_network: TaskNetwork,
     pub cpu_percent: f64,
     pub reply_timeout_ms: u64,
     pub heartbeat: Endpoint,
@@ -157,6 +179,7 @@ impl Default for Config {
             task: PathBuf::from("/opt/field/task"),
             adapter: Adapter::None,
             input: Endpoint::Serial { dev: PathBuf::from("/dev/ttyS1"), baud: 9600 },
+            input_backlog: Backlog::Queue,
             period_ms: 1000,
             output: Endpoint::File(PathBuf::from("/var/field/out")),
             dir: PathBuf::from("/var/field"),
@@ -171,6 +194,7 @@ impl Default for Config {
             restart_retired: false,
             cooldown_s: 600,
             memory_mb: 128,
+            task_network: TaskNetwork::Deny,
             cpu_percent: 0.0,
             reply_timeout_ms: 2000,
             heartbeat: Endpoint::None,
@@ -248,6 +272,13 @@ pub fn parse(text: &str) -> Result<Config, String> {
                     }
                 }
                 "input" => c.input = parse_endpoint(v)?,
+                "input_backlog" => {
+                    c.input_backlog = match v {
+                        "queue" => Backlog::Queue,
+                        "newest" => Backlog::Newest,
+                        _ => return Err(format!("input_backlog: expected queue or newest, got '{v}'")),
+                    }
+                }
                 "period_ms" => c.period_ms = int(key, v)?,
                 "output" => c.output = parse_endpoint(v)?,
                 "dir" => c.dir = PathBuf::from(v),
@@ -262,6 +293,13 @@ pub fn parse(text: &str) -> Result<Config, String> {
                 "restart_retired" => c.restart_retired = boolean(key, v)?,
                 "cooldown_s" => c.cooldown_s = int(key, v)?,
                 "memory_mb" => c.memory_mb = int(key, v)?,
+                "task_network" => {
+                    c.task_network = match v {
+                        "deny" => TaskNetwork::Deny,
+                        "allow" => TaskNetwork::Allow,
+                        _ => return Err(format!("task_network: expected deny or allow, got '{v}'")),
+                    }
+                }
                 "cpu_percent" => c.cpu_percent = int(key, v)?,
                 "reply_timeout_ms" => c.reply_timeout_ms = int(key, v)?,
                 "heartbeat" => c.heartbeat = parse_endpoint(v)?,
@@ -324,6 +362,11 @@ fn validate(c: &Config) -> Result<(), String> {
     if c.input == Endpoint::None {
         return Err("input = none: the supervisor needs a source".into());
     }
+    if c.input_backlog == Backlog::Newest
+        && !matches!(c.input, Endpoint::Tcp { .. } | Endpoint::Serial { .. } | Endpoint::File(_))
+    {
+        return Err(format!("input_backlog = newest: needs a tcp:, serial: or file: source, not {}", c.input));
+    }
     if c.output == Endpoint::Tick {
         return Err("output = tick: not a sink".into());
     }
@@ -362,7 +405,9 @@ pub fn load(path: &Path) -> Result<Config, String> {
 /// (period, limits, directories, restarts, heartbeat, caps) are left out,
 /// so an operator can retune without losing the run. The candidate is left
 /// out too: a staged update must not change results, and it is brought in
-/// on the running run.
+/// on the running run. `input_backlog = newest` decides which records are
+/// processed, so it is in; the default adds nothing, so a 0.2.0 checkpoint
+/// resumes under 0.3.0.
 pub fn identity(c: &Config, kat_in: &[u8], kat_out: &[u8], faults_text: Option<&str>) -> u64 {
     let adapter = match c.adapter {
         Adapter::None => "none",
@@ -385,6 +430,10 @@ pub fn identity(c: &Config, kat_in: &[u8], kat_out: &[u8], faults_text: Option<&
         faults_text.map_or("-".to_string(), |t| format!("{:016x}", crate::hash::of(t.as_bytes()))),
         c.oracle.as_ref().map_or("-".to_string(), |p| p.display().to_string()),
     );
+    let text = match c.input_backlog {
+        Backlog::Queue => text,
+        Backlog::Newest => text + "input_backlog=newest\n",
+    };
     crate::hash::of(text.as_bytes())
 }
 

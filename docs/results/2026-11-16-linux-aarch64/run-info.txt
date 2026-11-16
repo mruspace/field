@@ -1,0 +1,12 @@
+# 2026-11-16T15:23Z to 15:27Z on Linux 6.10.14-linuxkit aarch64 (Docker Desktop on one Apple M4, 10 CPUs), rustc 1.100.0, field 0.3.0 (quorum 0.4.0)
+# flood/: python3 -I scripts/flood.py docs/results/2026-11-16-linux-aarch64/flood, with OLD_FIELD_BIN = field 0.2.0 built from tag v0.2.0
+#   lock.csv     the demo task with --bug net@500 (every output right; from cycle 500, 100 UDP datagrams per request to a local
+#                listener) on 2,000 cycles of 2 ms, brought in all at once and by staged update (candidate_cycles = 500), under
+#                task_network = allow and deny. datagrams_received is what the listener read during the run.
+#   backlog.csv  a TCP source sending 16-byte records (sequence, send time) at 1,000 and 10,000 per second into 1,000 cycles of 10 ms
+#                (100 per second), under input_backlog = queue and newest. The task echoes the record; a TCP collector takes the
+#                age of the input when its output arrives.
+#   stall.csv    a TCP output peer that accepts and never reads (receive buffer 4 KiB), the tick source as fast as the task answers,
+#                max_seconds = 30. "this" is 0.3.0; "old" is 0.2.0, killed at 60 s.
+#   Each run directory has the run's field.conf, events.csv and summary.txt; paths are those inside the container.
+# scenarios.txt and power-cut.txt: ./scripts/scenarios.sh and ./scripts/power-cut.sh in the same container, same build.

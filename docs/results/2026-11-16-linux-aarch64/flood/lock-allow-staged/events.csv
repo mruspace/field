@@ -1,0 +1,10 @@
+cycle,event,detail
+0,candidate,started 2
+500,candidate,promoted 2
+500,candidate,started 1
+1000,candidate,promoted 1
+1000,candidate,promoted 0
+1000,candidate,updated
+1000,progress,delivered=1000 detected=0 alive=3 wrong=0
+2000,progress,delivered=2000 detected=0 alive=3 wrong=0
+2000,stopped,completed

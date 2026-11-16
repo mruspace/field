@@ -23,6 +23,10 @@ use std::time::{Duration, Instant};
 pub struct ProcessLimits {
     /// Address-space limit per process in MB; 0 is none. Enforced on Linux.
     pub memory_mb: u64,
+    /// `task_network = deny`: the task process cannot open a network
+    /// socket (crate::netlock). Set in the child only, never on the
+    /// supervisor, which needs its own source, sink and heartbeat.
+    pub deny_network: bool,
 }
 
 impl ProcessLimits {
@@ -96,6 +100,8 @@ pub struct Replica {
 fn command(task: &Path, limits: ProcessLimits) -> Command {
     let mut cmd = Command::new(task);
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    // built here, in the parent: the child only installs it
+    let filter = if limits.deny_network { crate::netlock::Filter::new() } else { None };
     // SAFETY: only async-signal-safe calls between fork and exec.
     unsafe {
         cmd.pre_exec(move || {
@@ -103,6 +109,11 @@ fn command(task: &Path, limits: ProcessLimits) -> Command {
             libc::signal(libc::SIGPIPE, libc::SIG_DFL);
             #[cfg(target_os = "linux")]
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            // last, so a failure leaves nothing half set: the spawn fails
+            // and the task never runs without its lock
+            if let Some(f) = &filter {
+                f.install()?;
+            }
             Ok(())
         });
     }

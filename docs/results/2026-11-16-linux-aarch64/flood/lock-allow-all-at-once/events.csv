@@ -1,0 +1,4 @@
+cycle,event,detail
+1000,progress,delivered=1000 detected=0 alive=3 wrong=0
+2000,progress,delivered=2000 detected=0 alive=3 wrong=0
+2000,stopped,completed

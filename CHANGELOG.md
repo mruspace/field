@@ -2,6 +2,26 @@
 
 All notable changes to Mru Field. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.3.0 (2026-11-16)
+
+### Added
+
+- The task network lock (docs/spec.md, section 11). `task_network = "deny"`, the default, sets a seccomp filter in each task process, the oracle included, before the task starts: `socket` fails with EACCES for every family but AF_UNIX, the old `socketcall` is refused on 32-bit ARM, and a system call from another architecture is refused. A build that sends to a network sends nothing, whatever its outputs. Enforced on Linux on x86_64, ARM64 and 32-bit ARM; elsewhere the summary says `task_network=deny(not-enforced-here)`. If the kernel refuses the filter, the task does not start and the error names the fix. `task_network = "allow"` turns it off. The `limits:` line of `summary.txt` shows it.
+- `input_backlog = "newest"` for `tcp:`, `serial:` and `file:` sources: after the cycle's record, the supervisor reads every complete record already waiting, for at most one period, and keeps the newest. `source,backlog` and `source,caught-up skipped=N from=C` in `events.csv`, once each per backlog; `skipped=` in the checkpoint; an `input:` line in `summary.txt`. The default, `queue`, is the 0.2.0 behavior and adds nothing to the checkpoint identity.
+- `field-demo-task --bug net@N` (right outputs, and 100 UDP datagrams per request to `FIELD_DEMO_NET`) and `--echo` (the output is the input), for the flood tests and bench.
+- `tests/flood.rs` (5 tests), unit tests for the backlog, serial lines and the write deadline, and `scripts/flood.py`. Results in docs/results/2026-11-16-linux-aarch64.
+
+### Fixed
+
+- A TCP output or heartbeat write had no deadline: a peer that stopped reading held the supervisor, its heartbeat and its run caps, without end. Writes to a TCP peer now end at 5 seconds, like serial writes. An output write that runs out of time stops the run with `sink-error tcp: timeout`, exit 1 and the checkpoint kept; a heartbeat write counts as failed.
+- A serial line with no newline grew the supervisor's memory without limit. A line over `record_max` is now cut as it arrives and the rest counted and dropped; the record and the logged length are as before.
+
+### Unchanged
+
+- The decision rule: the `quorum` crate from mruspace/flight v0.4.0, unchanged.
+- A 0.2.0 checkpoint resumes under 0.3.0.
+- Under user-mode emulation, which refuses seccomp filters, the scenario checks set `task_network = "allow"` (`FIELD_EMULATED=1`).
+
 ## 0.2.0 (2026-11-14)
 
 ### Added

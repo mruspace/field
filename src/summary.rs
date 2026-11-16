@@ -2,7 +2,7 @@
 //! N cycles, at a halt and at a clean stop. Nothing in it is estimated.
 
 use crate::checkpoint::Checkpoint;
-use crate::config::{Adapter, Config};
+use crate::config::{Adapter, Backlog, Config, TaskNetwork};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
@@ -92,14 +92,26 @@ pub fn text(r: &Report) -> String {
             r.footprint.supervisor_kib, r.footprint.replica_kib, r.footprint.cpu_s, r.footprint.wall_s
         ),
         format!(
-            "limits: memory={}MB/process cpu_share={} max_run={} reply_timeout={}ms period={}ms",
+            "limits: memory={}MB/process cpu_share={} max_run={} reply_timeout={}ms period={}ms task_network={}",
             c.memory_mb,
             if c.cpu_percent > 0.0 { format!("{}%", c.cpu_percent) } else { none() },
             if c.max_seconds > 0.0 { format!("{}s", c.max_seconds) } else { none() },
             c.reply_timeout_ms,
-            c.period_ms
+            c.period_ms,
+            match c.task_network {
+                TaskNetwork::Deny if crate::netlock::ENFORCED => "deny",
+                TaskNetwork::Deny => "deny(not-enforced-here)",
+                TaskNetwork::Allow => "allow",
+            }
         ),
     ];
+    if c.input_backlog == Backlog::Newest || cp.skipped > 0 {
+        let backlog = match c.input_backlog {
+            Backlog::Queue => "queue",
+            Backlog::Newest => "newest",
+        };
+        lines.push(format!("input: backlog={backlog} skipped={}", cp.skipped));
+    }
     if c.candidate.is_some() || cp.candidate.is_some() {
         let builds: Vec<&str> = cp.builds.iter().map(|b| if *b { "new" } else { "old" }).collect();
         let state = match (&cp.candidate_result, cp.trial) {

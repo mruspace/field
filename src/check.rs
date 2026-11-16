@@ -28,7 +28,16 @@ fn xorshift(s: &mut u64) -> u64 {
 pub fn run(cfg: &Config, o: &Options) -> i32 {
     let limits = Limits { record_max: cfg.record_max, state_max: cfg.state_max };
     let timeout = Duration::from_millis(cfg.reply_timeout_ms);
-    let spawn = || Replica::spawn(&cfg.task, cfg.adapter, ProcessLimits { memory_mb: cfg.memory_mb });
+    let spawn = || {
+        Replica::spawn(
+            &cfg.task,
+            cfg.adapter,
+            ProcessLimits {
+                memory_mb: cfg.memory_mb,
+                deny_network: cfg.task_network == crate::config::TaskNetwork::Deny,
+            },
+        )
+    };
     let (mut a, mut b) = match (spawn(), spawn()) {
         (Ok(a), Ok(b)) => (a, b),
         (Err(e), _) | (_, Err(e)) => {

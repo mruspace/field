@@ -1,0 +1,6 @@
+field=0.3.0 quorum=0.4.0 policy=shrink task=docs/results/2026-11-16-linux-aarch64/flood/lock-deny-all-at-once/new-build.sh adapter=none input=tick output=none
+cycles=2000 delivered=2000 detected=0 wrong=0 alive=3 mode=vote last_delivered=2000 kat_tests=6
+stopped=completed at_cycle=2000 halted_at=never started=2026-11-16T15:24:10Z written=2026-11-16T15:24:16Z
+checkpoint: every=100 resumes=0 last=2000 halted=no
+footprint: supervisor_max_rss=13108KiB replica_max_rss=1568KiB cpu=0.575s wall=6.1s
+limits: memory=128MB/process cpu_share=none max_run=none reply_timeout=2000ms period=2ms task_network=deny
