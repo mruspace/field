@@ -105,14 +105,17 @@ fn input_backlog_newest_skips_what_queued_up_and_logs_it_once() {
     assert_eq!(field_of(&line2, "wrong"), "0", "{stdout}");
     let input = stdout.lines().find(|l| l.starts_with("input:")).unwrap_or("").to_string();
     assert_eq!(field_of(&input, "backlog"), "newest", "{stdout}");
-    // cycle 1 takes record 0 and skips to 1,999; from then on the source
-    // is slower than the cycle, and nothing is skipped
-    assert_eq!(field_of(&input, "skipped"), "1999", "{stdout}");
+    // cycle 1 takes record 0 and skips the burst behind it (plus any
+    // trickle record that arrived before a slow start-up ended); from then
+    // on the source is slower than the cycle, and nothing more is skipped
+    let skipped: u64 = field_of(&input, "skipped").parse().unwrap();
+    assert!((1999..2040).contains(&skipped), "{stdout}");
     let ev = r.events();
     assert!(ev.contains(&"1,source,backlog".to_string()), "{ev:?}");
-    assert!(ev.iter().any(|l| l.contains(",source,caught-up skipped=1999 from=1")), "{ev:?}");
+    let caught = format!(",source,caught-up skipped={skipped} from=1");
+    assert!(ev.iter().any(|l| l.ends_with(&caught)), "{ev:?}");
     assert_eq!(ev.iter().filter(|l| l.contains(",source,")).count(), 2, "{ev:?}");
-    assert!(r.checkpoint().contains("\nskipped=1999\n"));
+    assert!(r.checkpoint().contains(&format!("\nskipped={skipped}\n")));
 }
 
 #[test]
