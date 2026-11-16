@@ -1,0 +1,6 @@
+field=0.3.0 quorum=0.4.0 policy=shrink task=docs/results/2026-11-16-linux-aarch64/flood/backlog-10000-queue/new-build.sh adapter=none input=tcp:127.0.0.1:47825 output=tcp:127.0.0.1:57885
+cycles=1000 delivered=1000 detected=0 wrong=- alive=3 mode=vote last_delivered=1000 kat_tests=6
+stopped=completed at_cycle=1000 halted_at=never started=2026-11-16T15:24:50Z written=2026-11-16T15:25:02Z
+checkpoint: every=100 resumes=0 last=1000 halted=no
+footprint: supervisor_max_rss=13236KiB replica_max_rss=1504KiB cpu=0.348s wall=12.1s
+limits: memory=128MB/process cpu_share=none max_run=none reply_timeout=2000ms period=10ms task_network=deny

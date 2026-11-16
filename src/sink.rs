@@ -12,6 +12,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// How long one write to a serial port or a TCP peer may take. A peer that
+/// stopped reading, or a network too jammed to carry the bytes, ends the
+/// write there instead of holding the supervisor (docs/spec.md, section 11).
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Connect, then make the stream non-blocking for writes with a deadline.
+fn connect(host: &str, port: u16) -> Result<TcpStream, String> {
+    let s = TcpStream::connect((host, port)).map_err(|e| format!("tcp:{host}:{port}: {e}"))?;
+    s.set_nonblocking(true).map_err(|e| format!("tcp:{host}:{port}: {e}"))?;
+    Ok(s)
+}
+
 pub trait Sink {
     fn deliver(&mut self, cycle: u64, bytes: &[u8]) -> Result<(), String>;
     /// Flush and sync. Returns the length of a file sink (0 for the others),
@@ -38,8 +50,7 @@ pub fn open(ep: &Endpoint, resume_len: Option<u64>, cmd_timeout: Duration) -> Re
             Box::new(FramedFile { file: f })
         }
         Endpoint::Tcp { host, port } => {
-            let s = TcpStream::connect((host.as_str(), *port)).map_err(|e| format!("tcp:{host}:{port}: {e}"))?;
-            Box::new(FramedStream { stream: s })
+            Box::new(FramedStream { stream: connect(host, *port)?, timeout: WRITE_TIMEOUT })
         }
         Endpoint::Serial { dev, baud } => {
             let f = open_serial(dev, *baud).map_err(|e| format!("{}: {e}", dev.display()))?;
@@ -86,11 +97,16 @@ impl Sink for FramedFile {
 
 struct FramedStream {
     stream: TcpStream,
+    timeout: Duration,
 }
 
 impl Sink for FramedStream {
+    /// A write that runs out of time leaves a partial frame on the stream:
+    /// the error stops the run, and a resume connects again from the
+    /// checkpoint, so the peer sees a new stream, not a broken one.
     fn deliver(&mut self, cycle: u64, bytes: &[u8]) -> Result<(), String> {
-        self.stream.write_all(&frame(cycle, bytes)).map_err(|e| format!("tcp: {e}"))
+        protocol::write_all_deadline(self.stream.as_raw_fd(), &frame(cycle, bytes), Instant::now() + self.timeout)
+            .map_err(|e| format!("tcp: {e}"))
     }
     fn sync(&mut self) -> io::Result<u64> {
         self.stream.flush()?;
@@ -109,7 +125,7 @@ impl Sink for SerialLines {
         line.push(b',');
         line.extend_from_slice(bytes);
         line.push(b'\n');
-        write_deadline(&self.file, &line, Duration::from_secs(5)).map_err(|e| format!("serial: {e}"))
+        write_deadline(&self.file, &line, WRITE_TIMEOUT).map_err(|e| format!("serial: {e}"))
     }
     fn sync(&mut self) -> io::Result<u64> {
         Ok(0)
@@ -174,10 +190,7 @@ pub fn open_line(ep: &Endpoint) -> Result<Option<Box<dyn Line>>, String> {
     Ok(match ep {
         Endpoint::None => None,
         Endpoint::File(p) => Some(Box::new(LineFile { path: p.clone() })),
-        Endpoint::Tcp { host, port } => {
-            let s = TcpStream::connect((host.as_str(), *port)).map_err(|e| format!("tcp:{host}:{port}: {e}"))?;
-            Some(Box::new(LineStream { stream: s }))
-        }
+        Endpoint::Tcp { host, port } => Some(Box::new(LineStream { stream: connect(host, *port)? })),
         Endpoint::Serial { dev, baud } => {
             let f = open_serial(dev, *baud).map_err(|e| format!("{}: {e}", dev.display()))?;
             Some(Box::new(LineSerial { file: f }))
@@ -211,7 +224,9 @@ struct LineStream {
 
 impl Line for LineStream {
     fn line(&mut self, text: &str) -> Result<(), String> {
-        self.stream.write_all(format!("{text}\n").as_bytes()).map_err(|e| format!("tcp: {e}"))
+        let line = format!("{text}\n");
+        protocol::write_all_deadline(self.stream.as_raw_fd(), line.as_bytes(), Instant::now() + WRITE_TIMEOUT)
+            .map_err(|e| format!("tcp: {e}"))
     }
 }
 
@@ -221,8 +236,7 @@ struct LineSerial {
 
 impl Line for LineSerial {
     fn line(&mut self, text: &str) -> Result<(), String> {
-        write_deadline(&self.file, format!("{text}\n").as_bytes(), Duration::from_secs(5))
-            .map_err(|e| format!("serial: {e}"))
+        write_deadline(&self.file, format!("{text}\n").as_bytes(), WRITE_TIMEOUT).map_err(|e| format!("serial: {e}"))
     }
 }
 
@@ -266,3 +280,30 @@ pub fn open_serial(dev: &Path, baud: u32) -> io::Result<File> {
 }
 
 use std::os::unix::fs::OpenOptionsExt;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn a_peer_that_stops_reading_ends_the_write_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stream = connect("127.0.0.1", port).unwrap();
+        // accepted, never read: the socket buffers fill, then nothing moves
+        let (_peer, _) = listener.accept().unwrap();
+        let mut sink = FramedStream { stream, timeout: Duration::from_millis(200) };
+        let block = vec![0x5a; 1 << 20];
+        let start = Instant::now();
+        let mut err = None;
+        for cycle in 0..256 {
+            if let Err(e) = sink.deliver(cycle, &block) {
+                err = Some(e);
+                break;
+            }
+        }
+        assert_eq!(err.as_deref(), Some("tcp: timeout"));
+        assert!(start.elapsed() < Duration::from_secs(10), "took {:?}", start.elapsed());
+    }
+}

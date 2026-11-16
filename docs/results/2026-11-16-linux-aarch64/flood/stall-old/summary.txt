@@ -1,0 +1,6 @@
+field=0.2.0 quorum=0.4.0 policy=shrink task=/target/release/field-demo-task adapter=none input=tick output=tcp:127.0.0.1:42695
+cycles=101000 delivered=101000 detected=0 wrong=- alive=3 mode=vote last_delivered=101000 kat_tests=6
+stopped=running at_cycle=101000 halted_at=never started=2026-11-16T15:25:14Z written=2026-11-16T15:25:18Z
+checkpoint: every=100 resumes=0 last=101000 halted=no
+footprint: supervisor_max_rss=13236KiB replica_max_rss=0KiB cpu=2.611s wall=3.6s
+limits: memory=128MB/process cpu_share=none max_run=30s reply_timeout=2000ms period=0ms

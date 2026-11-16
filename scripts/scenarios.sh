@@ -8,7 +8,9 @@ cd "$(dirname "$0")/.."
 
 # FIELD_BIN and FIELD_TASK test prebuilt binaries (for example static ARM
 # builds under emulation); otherwise the local release build is used.
-# FIELD_EMULATED=1 skips the check that reads /proc.
+# FIELD_EMULATED=1 skips the check that reads /proc, and sets
+# task_network = "allow": user-mode emulation refuses seccomp filters, so
+# the network lock cannot be set there (docs/spec.md, section 11).
 if [ -z "${FIELD_BIN:-}" ]; then
     cargo build --release --quiet
 fi
@@ -35,6 +37,7 @@ conf() {
     {
         printf 'task = "%s"\ninput = "tick"\nperiod_ms = 0\noutput = "none"\ndir = "%s"\n' "$T" "$d"
         printf 'kat_input = "%s"\nkat_output = "%s"\noracle = "%s"\n' "$KAT_IN" "$KAT_OUT" "$T"
+        if [ -n "${FIELD_EMULATED:-}" ]; then printf 'task_network = "allow"\n'; fi
         for l in "$@"; do printf '%s\n' "$l"; done
     } >"$d/field.conf"
 }

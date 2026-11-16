@@ -1,6 +1,6 @@
 # Mru Field supervisor: specification
 
-Status: **built, version 0.2.0.** Version 0.3 of this document, November 14, 2026. Version 0.2.0 adds staged updates (section 10). The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on October 18 and 22, 2026, with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
+Status: **built, version 0.3.0.** Version 0.4 of this document, November 16, 2026. Version 0.3.0 adds flood limits (section 11); version 0.2.0 added staged updates (section 10). The supervisor in this repository implements it. It has run on the bench on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet. The prototype it grew from is the `quorum` demo in [mruspace/flight](https://github.com/mruspace/flight) (`demo/src/main.rs`), which ran on ESA's OPS-SAT PRETTY satellite on October 18 and 22, 2026, with a fixed task. This specification turned that prototype into a product an operator can run with their own task. Where version 0.1.0 differs from version 0.1 of this document, the text says so.
 
 Words: a **processor** is one computing unit that runs replicas. A **system** is the deployed equipment (a buoy, a station, a turbine controller). **Hard-to-reach** means a repair visit is slow, costly or impossible; the system may be visited once a year or never. **Hardware** failing means any part of the system failing.
 
@@ -8,14 +8,14 @@ Words: a **processor** is one computing unit that runs replicas. A **system** is
 
 A supervisor for one task on a hard-to-reach system: one that runs for months between visits, where a visit is slow, costly or impossible. The operator writes the task as a function from an input record to an output record. The supervisor runs that task as three replicas, feeds every replica the same input, compares their outputs on every cycle, and delivers only outputs it has checked. When a replica is wrong, hung or dead, the supervisor retires it and goes on with the ones left: vote on three, compare on two, self-check on one. It survives a reset or a power cut by resuming from a checkpoint. It writes a log that says which replica failed, on which cycle, how it was caught, and what the supervisor did.
 
-It runs under the system's service manager (systemd or similar) as one process on one Linux board. A later version runs replicas on a second processor over a link (section 11). A new build of the task comes in by staged update (section 10).
+It runs under the system's service manager (systemd or similar) as one process on one Linux board. A later version runs replicas on a second processor over a link (section 12). A new build of the task comes in by staged update (section 10). A node does not flood a network, and keeps working when its own source or sink is flooded or jammed (section 11).
 
 ### What it is not
 
 - **Not a service manager.** systemd restarts a process that dies. The supervisor catches a process that is alive and wrong, alive and hung, or restarted from zero after a reset. The supervisor itself is started by systemd.
 - **Not a scheduler.** cron starts things on time. The supervisor runs one task in cycles and does not decide when other things run.
 - **Not a watchdog.** A hardware watchdog reboots a stuck board. The supervisor runs above the watchdog and resumes after it fires.
-- **Not hardware redundancy, in version 1.** Three replicas on one processor catch software faults and memory faults in the replicas. They do not survive the processor itself failing. That needs a second processor (section 11). Every document says so.
+- **Not hardware redundancy, in version 1.** Three replicas on one processor catch software faults and memory faults in the replicas. They do not survive the processor itself failing. That needs a second processor (section 12). Every document says so.
 
 ## 2. The one design decision: inputs are read once
 
@@ -103,6 +103,8 @@ The periodic test every 64 cycles is configuration (`kat_every`).
 | Reply timeout | 2,000 ms | a replica that is late is lost. The timeout covers the request too: a replica that stopped reading leaves its pipe full, and the supervisor's write gives up at the deadline instead of blocking. The reply deadline for every replica starts after the last request of the cycle was sent, so one blocked send costs the cycle one timeout and costs the healthy replicas nothing |
 | Cycle period | 1,000 ms | the minimum time between cycles; the supervisor never runs faster than the source produces, and `0` is as fast as the source |
 | Run time | unlimited | `max_seconds` and `max_cycles` cap a run for tests and the bench |
+| Task network | deny | a task process can open only AF_UNIX sockets: a seccomp filter set in each task process before the task starts (Linux on x86_64, ARM64 and 32-bit ARM; section 11) |
+| Writes out | 5 s | a write to a serial port or a TCP peer, for an output or the heartbeat, ends at 5 s (section 11) |
 | Clean stop | SIGTERM or SIGINT | finish the cycle, checkpoint, write the summary, exit 0; every wait looks at the flag at least every 200 ms |
 
 The supervisor is user space only. No drivers, no device files beyond those the operator configures for acquisition and output, no privileged calls, no network unless configured. It cannot reboot the board. A task process gets `SIGPIPE` back at its default and, on Linux, dies with the supervisor (`PR_SET_PDEATHSIG`), so a task that ignores end of input cannot outlive a supervisor that was killed.
@@ -143,6 +145,7 @@ One file. Fields, with defaults:
 task        = "/opt/field/task"        # the replica executable
 adapter     = "none"                   # or "cli" for a run-once program
 input       = "serial:/dev/ttyS1:9600" # acquisition source; or tick, file:, tcp:, cmd:
+input_backlog = "queue"                # or "newest": skip what queued up (section 11)
 period_ms   = 1000                     # minimum cycle period; 0 is as fast as the source
 output      = "file:/var/field/out"    # delivered outputs; or serial:, tcp:, cmd:, none
 dir         = "/var/field"             # events, summary, checkpoint
@@ -157,6 +160,7 @@ summary_every    = 1000
 restart_retired  = false
 cooldown_s  = 600
 memory_mb   = 128
+task_network = "deny"                  # or "allow" (section 11)
 cpu_percent = 0                        # 0 is uncapped
 reply_timeout_ms = 2000
 heartbeat   = "none"                   # or serial:/tcp:/file:
@@ -179,7 +183,7 @@ The candidate is not part of the checkpoint identity: a staged update must not c
 
 A new build of the task is the one change that reaches every replica: the replicas run the same program, so a bug in the new build is in all three at once. Three replicas that all took the same bad update agree on its wrong answer, or all stop together. Staged updates bring a new build in one slot at a time and keep the old build as the check until the last slot switches.
 
-The operator sets `candidate` to the new build. It must give the same outputs as the old build: a patch, a new compiler, new libraries, a new platform. An update meant to change outputs is out of scope in version 0.2.0 (section 14).
+The operator sets `candidate` to the new build. It must give the same outputs as the old build: a patch, a new compiler, new libraries, a new platform. An update meant to change outputs is out of scope in version 0.2.0 (section 15).
 
 1. **First trial.** When all three replicas are alive, slot 2 stops the old build and starts the candidate, which must pass the known-answer test twice. Slot 2 then votes on every cycle with two slots on the old build.
 2. **Second trial.** After `candidate_cycles` clean cycles, slot 1 takes the candidate the same way. Two slots now run the new build and one runs the old. While the update runs, an output is delivered only if a slot on the old build gave the same bytes, so two slots on the new build can never outvote the old one.
@@ -195,17 +199,49 @@ The operator sets `candidate` to the new build. It must give the same outputs as
 
 Measured on the bench (`scripts/staged.sh`, `docs/results/2026-11-14-darwin-arm64/staged/`): each bad build of the demo task, on 5,000 cycles, brought in all at once and by staged update. All at once, a build that crashes or hangs on cycle 500 halts the run on cycle 500, and a build that gives wrong answers from cycle 500 delivers 4,501 wrong outputs that nothing flags. By staged update, every one of those builds is rejected on the cycle its bug first shows, every slot goes back to the old build, three replicas stay alive, and no wrong output is delivered; a rejection in the second trial withholds one cycle.
 
-## 11. The second processor (later)
+## 11. Floods
+
+A flood is traffic that comes in faster than a system can take it, or goes out faster than a network can carry it. Field runs on one processor and does not run a network, so it cannot stop a flood on one. Version 0.3.0 makes sure a Field node does not start one, whatever build of the task it runs, and keeps working when its own source is flooded or its own sink is jammed.
+
+**What a node sends.** The supervisor delivers at most one output per cycle, so at most one every `period_ms`, and one heartbeat line every `heartbeat_every_s`. It never listens for connections: a `tcp:` source, sink or heartbeat connects out. Only the supervisor talks to the outside. The task talks to the supervisor over its standard input and output (section 3).
+
+**The task network lock.** `task_network = "deny"`, the default, makes that hold for the task too. Between fork and exec, the supervisor sets a seccomp filter in each task process, the oracle included, and the filter stays with every process the task starts. `socket` fails with EACCES for every address family except AF_UNIX. On 32-bit ARM, the old multiplexed `socketcall` is refused too, and a system call from another architecture is refused on every target. A build that tries to send to a network gets an error and sends nothing. The filter is set last, after the memory limit. If the kernel refuses it, the task does not start, and the error says what to do. The lock is enforced on Linux on x86_64, ARM64 and 32-bit ARM. Elsewhere the summary says `task_network=deny(not-enforced-here)`. User-mode emulators refuse seccomp filters, so the scenario checks under emulation set `allow`. `task_network = "allow"` turns the lock off, for a task that needs a socket (section 3 already says a task reads only its standard input).
+
+The lock matters for staged updates. A build that floods a network while every output is right passes the vote and passes a staged update, because nothing it delivers is wrong (section 10 compares outputs). The lock is what stops that build.
+
+**Input backlog.** A source that sends faster than the cycle takes its records builds a backlog. With `input_backlog = "queue"`, the default and the behavior of 0.2.0, every record is processed in order and waits its turn, so the input grows older for as long as the flood lasts. With `"newest"`, after it reads the cycle's record, the supervisor reads every complete record already waiting, for at most one period (10 ms when `period_ms` is 0), keeps the newest and skips the others. It logs `source,backlog` once when skipping begins, and `source,caught-up skipped=N from=C` once when a cycle finds nothing behind its record, so a long flood does not flood the log. The checkpoint and the summary (`input: backlog=newest skipped=N`) keep the total. `newest` is for `tcp:`, `serial:` and `file:` sources (a FIFO; on a regular file it reads to the end). It decides which records are processed, so it is part of the checkpoint identity. `queue` adds nothing to the identity, so a 0.2.0 checkpoint resumes under 0.3.0. Use `newest` when only the current value matters, for example a sensor reading. Keep `queue` when every record must be processed, for example a command stream.
+
+**Memory on a serial source.** A serial line longer than `record_max` is cut as it arrives, and the rest of it is counted and dropped until its newline. Version 0.2.0 held the whole line first, so a source that never sent a newline grew the supervisor's memory without limit.
+
+**Writes with a deadline.** Every write to a serial port or a TCP peer ends after 5 seconds, for outputs and for the heartbeat. In 0.2.0 a TCP write had no deadline. A peer that stopped reading, or a network too jammed to carry the bytes, held the write, and with it the whole supervisor: no cycles, no heartbeat, and the run caps never ran. Now an output write that runs out of time stops the run with `sink-error tcp: timeout` and exit 1, and keeps the checkpoint. The service manager starts the supervisor again, and the resume connects again, so the peer gets a new stream, not a broken frame. A heartbeat write that runs out of time counts as failed, and the run goes on.
+
+**What it does not cover.**
+
+- A flood on a network. Field does not run the network.
+- A `cmd:` source or sink. Those are the operator's programs, not the task, and the lock does not apply to them.
+- A source faster than the supervisor can read in one period. `newest` reads for one period, then takes the newest record it has.
+- A backlog under `queue`. The records wait their turn; that is what `queue` means.
+- Overload of the processor. The CPU share is in section 6.
+
+Measured on the bench (`scripts/flood.py`, `docs/results/2026-11-16-linux-aarch64/flood/`, Linux in Docker on one Apple M4):
+
+A build with the `net@500` bug: every output right, and from cycle 500, 100 UDP datagrams per request to a local listener. On 2,000 cycles with `task_network = "allow"`, all at once, 450,300 datagrams arrived (1,501 cycles, 3 replicas, 100 each), and a staged update took the build in (`updated@1000`), with 400,100 datagrams. With `"deny"`, both ways, 0 arrived. Every run delivered 2,000 outputs, 0 wrong, 3 alive.
+
+A TCP source at 1,000 and 10,000 records per second into 100 cycles per second, for 1,000 cycles. Under `queue`, the input was 5.6 and 6.0 seconds old at the median, and 11.1 and 12.0 seconds old by the last cycle. Under `newest`, it was 0.6 and 0.8 ms old at the median and at most 6.6 and 11.2 ms, with 11,175 and 122,489 records skipped. At 10,000 per second the backlog never cleared, and the log has one `source,backlog` line for it. The supervisor's peak memory was about 13 MB in all four runs.
+
+A TCP output peer that never reads. Version 0.2.0 hung once the socket buffers filled: no cycles, and its 30-second run cap never ran; it was killed at 60 seconds. Version 0.3.0 ended at 7.7 seconds with `sink-error tcp: timeout` and exit 1, after 70,428 outputs; the write of cycle 70,429 ran out of time, and the checkpoint was kept.
+
+## 12. The second processor (later)
 
 Version 1 runs on one board. The design keeps the path open: a replica slot may point at a remote replica host over a serial or Ethernet link, the request and response records are the same bytes, and the reply timeout covers the link. In the code every slot talks through one interface with one implementation today, a local process over its standard input and output. With one replica on a second board, a failure of the first processor leaves a replica that can carry the task until the next visit. The supervisor itself is then the single point of failure, and the step after that is two supervisors with a lease. None of this is built; the record format and the configuration are designed so that it can be.
 
-## 12. The first deployment: EMSO W1M3A
+## 13. The first deployment: EMSO W1M3A
 
 The pilot in the EMSO ERIC physical access programme (proposal due October 31, 2026; kick-off March 2027; twelve weeks in the water May to August 2027) deploys one Mru Field node on the W1M3A spar buoy off Genoa, operated by CNR. Node: one industrial Linux board in a DIN-rail case, under 0.25 A at 24 V, on one relay-switched channel that CNR can cut at any time, with an optional one-line heartbeat into the buoy's control system.
 
 What the pilot runs: the supervisor with the self-contained demo task (`field-demo-task`, the flown demo's payload) and the stored fault schedule in `tasks/pilot/faults.txt`, in matched periods under `policy = "shrink"` and `policy = "tmr"`, plus the real power cuts the buoy applies on its own schedule and when the battery runs low. That proves the supervisor survives the environment and the resets, and gives real failure data from a real system. It does not yet run CNR's own acquisition under the supervisor; that is the step after the pilot, and the task interface above is designed so that it can be done without changing the supervisor.
 
-## 13. Acceptance
+## 14. Acceptance
 
 Before any deployment, on the bench:
 
@@ -215,8 +251,9 @@ Before any deployment, on the bench:
 4. Ten power cuts at random cycles; every resume continues the counts and keeps every retired slot retired; no event in the log twice. **Done:** `scripts/power-cut.sh`, with SIGKILL as the cut; a real power cut on a board is not done.
 5. Seven days unattended on the bench twin with the real cycle period and the real sources, footprint within limits for the whole run. **Not done:** `scripts/soak.sh` starts the run; the bench twin does not exist yet.
 6. Staged updates (section 10): a good build reaches every slot; every kind of bad build (wrong, hung, crashed, wrong on some inputs, failing its known-answer test) is rejected in each trial, with every slot back on the old build and no wrong output delivered; a lost old replica pauses the update; a power cut during a trial resumes it. **Done:** `tests/staged.rs`, scenario checks 24 to 26, and `scripts/staged.sh`.
+7. Floods (section 11): a build that sends to a network sends nothing under `task_network = "deny"` on Linux, with every output still right; `input_backlog = "newest"` skips what queued up and logs it once; a serial line with no end does not grow memory; a peer that stops reading ends the write at its deadline. **Done:** `tests/flood.rs`, the unit tests in `src/source.rs` and `src/sink.rs`, and `scripts/flood.py`.
 
-## 14. Open questions
+## 15. Open questions
 
 - The state record's maximum size: `state_max`, 64 KiB by default, and the state is in the checkpoint. Larger state, or state in a separate file, is open.
 - Whether restarting retired replicas should be on by default after the pilot. Still off; the pilot configuration turns it on, since its schedule retires all three replicas.

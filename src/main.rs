@@ -9,6 +9,7 @@ mod config;
 mod faults;
 mod hash;
 mod log;
+mod netlock;
 mod protocol;
 mod replica;
 mod sink;

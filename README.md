@@ -11,7 +11,7 @@
 
 Software for hard-to-reach systems on Earth: ocean observatories, buoys and moorings, offshore and remote sites, polar and seismic stations, anything that runs for months between visits. The supervisor runs an operator's task as three replicas on the system's own processor, feeds every replica the same input, delivers only outputs it has checked, retires replicas that fail, keeps going on the ones left, and resumes after a reset or a power cut. Part of [Mru](https://mru.space).
 
-**Status (November 14, 2026): version 0.2.0, built and tested on the bench.** Version 0.2.0 adds [staged updates](#staged-updates). The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on October 18, 22 and 28, 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
+**Status (November 16, 2026): version 0.3.0, built and tested on the bench.** Version 0.3.0 adds [flood limits](#flood-limits); version 0.2.0 added [staged updates](#staged-updates). The supervisor implements the [specification](docs/spec.md). It runs on general-purpose processors (Linux x86_64 and ARM64, macOS, and static ARM builds under emulation in CI). It has not run on a board in a system yet, and it has no qualification evidence. The decision rule is the `quorum` crate from [mruspace/flight](https://github.com/mruspace/flight), unchanged, the same code that ran on ESA's OPS-SAT PRETTY satellite on October 18, 22 and 28, 2026. The first deployment, an EMSO ERIC ocean test, is proposed for 2027.
 
 ## What it does that a service manager does not
 
@@ -42,6 +42,28 @@ Each bad build of the demo task on 5,000 cycles, brought in all at once and by s
 | Wrong from cycle 2,500 (after the last switch) | 2,501 wrong | 2,501 wrong: no old build is left to disagree |
 
 The last line is the limit: a bug that first shows after the last switch gets through. A longer trial covers more inputs and more time. The new build must give the same outputs as the old one; an update meant to change outputs is not covered yet.
+
+## Flood limits
+
+Field does not run a network and cannot stop a flood on one. Version 0.3.0 makes sure a Field node does not start one, whatever build of the task it runs, and keeps working when its own source is flooded or its own sink is jammed ([section 11](docs/spec.md#11-floods)):
+
+- **The task network lock.** With `task_network = "deny"`, the default, each task process gets a seccomp filter before it starts: it can open AF_UNIX sockets and nothing else. Linux on x86_64, ARM64 and 32-bit ARM.
+- **Input backlog.** With `input_backlog = "newest"`, a source that sends faster than the cycle does not make the input grow old: the supervisor keeps the newest complete record, skips the rest, and logs the backlog once when it begins and once when it ends. The default, `queue`, takes every record in order.
+- **Writes with a deadline.** A write to a TCP peer or a serial port ends at 5 seconds. An output write that runs out of time stops the run with an error and keeps the checkpoint, so the service manager can start it again. In 0.2.0 a TCP peer that stopped reading held the whole supervisor.
+
+A staged update compares outputs, so a build that floods a network while every output is right passes it. The lock is what stops that build. Linux in Docker on one Apple M4 ([`scripts/flood.py`](scripts/flood.py), [results](docs/results/2026-11-16-linux-aarch64/flood/)):
+
+| Run | Result |
+|---|---|
+| A build that sends 100 datagrams per request from cycle 500, `allow`, all at once | 450,300 datagrams out; 2,000 delivered, 0 wrong |
+| The same build, `allow`, by staged update | Updated on cycle 1,000; 400,100 datagrams out; 0 wrong |
+| The same build, `deny`, both ways | 0 datagrams out; 2,000 delivered, 0 wrong |
+| Source at 10,000 records per second into 100 cycles per second, `queue` | Input 12.0 s old by the last cycle |
+| The same source, `newest` | Input 0.8 ms old at the median, 11.2 ms at most; 122,489 skipped, one log line |
+| A TCP output peer that never reads, 0.2.0 | Hung; its 30 s run cap never ran; killed at 60 s |
+| The same peer, 0.3.0 | Ended at 7.7 s with `sink-error tcp: timeout`, checkpoint kept |
+
+The limits: the lock covers the task, not the operator's own `cmd:` source or sink. `newest` reads for at most one period, then takes the newest record it has. Overload of the processor is the CPU share's job.
 
 ## The one design decision
 
@@ -131,10 +153,12 @@ That run is in the same results directory. The checkpoint was every 20 cycles an
 | Memory per process | 128 MB address space, set in each task process before it starts | Linux |
 | CPU share | `cpu_percent`, by sleeping after each cycle so the CPU time of the supervisor and all its task processes stays under the share, start-up included | Linux; elsewhere the cycle's wall time stands in for CPU time |
 | Reply timeout | 2,000 ms for the request and the reply; a task that stopped reading cannot block the supervisor on a full pipe | all |
+| Task network | `deny`: a task process can open only AF_UNIX sockets (a seccomp filter set before the task starts) | Linux on x86_64, ARM64 and 32-bit ARM |
+| Writes out | 5 s for each write to a serial port or a TCP peer, outputs and heartbeat | all |
 | Clean stop | SIGTERM: finish the cycle, checkpoint, summary, exit 0, within 200 ms of any wait | all |
-| Replicas, strikes, window | 3, 3, 200: constants of quorum 0.4.0; the configuration refuses other values | version 0.2.0 |
+| Replicas, strikes, window | 3, 3, 200: constants of quorum 0.4.0; the configuration refuses other values | version 0.3.0 |
 
-Known limits, stated next to the claims: three replicas on one processor catch faults in the replicas, not a failure of the processor (a second processor over a link is planned, [section 11](docs/spec.md#11-the-second-processor-later)). A staged update catches a bad build only while the old build is still running in a slot. On the last replica, a fault that hits both computations alike gets through; only the periodic known-answer test catches a stuck output, after up to `kat_every` cycles. In compare mode, two replicas that disagree and both pass the test lose that cycle, and two that both fail halt the run. Nothing here is qualification evidence.
+Known limits, stated next to the claims: three replicas on one processor catch faults in the replicas, not a failure of the processor (a second processor over a link is planned, [section 12](docs/spec.md#12-the-second-processor-later)). A staged update catches a bad build only while the old build is still running in a slot, and only by its outputs: a build that floods a network with every output right passes it, and the network lock is what stops that build. Field does not run a network and cannot stop a flood on one. On the last replica, a fault that hits both computations alike gets through; only the periodic known-answer test catches a stuck output, after up to `kat_every` cycles. In compare mode, two replicas that disagree and both pass the test lose that cycle, and two that both fail halt the run. Nothing here is qualification evidence.
 
 ## Layout
 
@@ -142,30 +166,32 @@ Known limits, stated next to the claims: three replicas on one processor catch f
 |---|---|
 | [src/supervisor.rs](src/supervisor.rs) | The cycle: acquire, ask, decide, compare bytes, deliver, health, checkpoint |
 | [src/replica.rs](src/replica.rs) | A task process: limits before exec, non-blocking requests with a deadline, the known-answer test |
+| [src/netlock.rs](src/netlock.rs) | The task network lock: the seccomp filter a task process gets before exec |
 | [src/protocol.rs](src/protocol.rs) | The task interface: framing, reads and writes that give up at a deadline |
-| [src/source.rs](src/source.rs), [src/sink.rs](src/sink.rs) | Acquisition and delivery: `tick`, `file:`, `serial:`, `tcp:`, `cmd:`; the heartbeat |
+| [src/source.rs](src/source.rs), [src/sink.rs](src/sink.rs) | Acquisition and delivery: `tick`, `file:`, `serial:`, `tcp:`, `cmd:`; the input backlog; the heartbeat; writes with a deadline |
 | [src/checkpoint.rs](src/checkpoint.rs), [src/log.rs](src/log.rs), [src/summary.rs](src/summary.rs) | What comes out |
 | [src/config.rs](src/config.rs), [src/faults.rs](src/faults.rs), [src/check.rs](src/check.rs) | The configuration, the fault schedule, `check-task` |
 | [tasks/demo](tasks/demo) | The demo task, its known-answer records and a bench configuration |
 | [tasks/pilot/faults.txt](tasks/pilot/faults.txt) | The pilot's fault schedule, with its expected course |
-| [tests](tests), [scripts](scripts) | Integration tests; the scenario checks, the power-cut check, the long bench run |
-| [docs/spec.md](docs/spec.md) | The specification, version 0.3, with what version 0.2.0 does |
+| [tests](tests), [scripts](scripts) | Integration tests; the scenario checks, the power-cut check, the staged and flood benches, the long bench run |
+| [docs/spec.md](docs/spec.md) | The specification, version 0.4, with what version 0.3.0 does |
 | [docs/results](docs/results) | The runs the numbers in this file come from |
 
 ## Tests
 
 ```sh
-cargo test --release          # 34 unit tests, 24 integration tests
+cargo test --release          # 39 unit tests, 29 integration tests
 ./scripts/scenarios.sh        # 26 checks: 23 ported from mruspace/flight where they apply, 3 on staged updates
 ./scripts/power-cut.sh        # ten kills at random cycles, one resume each
 ./scripts/staged.sh           # each bad build, all at once and by staged update
+python3 -I scripts/flood.py   # the network lock, the input backlog and a stalled peer
 ```
 
 The scenario checks run in CI on Linux x86_64, Linux ARM64 and macOS, and on static musl builds for aarch64, armv7 and x86_64 under emulation. The flight repository's checks on the radiation sensor and on stuck bits inside the task do not apply here: the task is a black box to the supervisor, and the flight bench measures those.
 
 ## Acceptance
 
-Of the six bench steps in [the specification](docs/spec.md#13-acceptance), five are done in this repository: the scenario checks, the determinism test, the fault schedule, ten power cuts (with SIGKILL as the cut), and staged updates. The seven-day run on a bench twin is not done; `scripts/soak.sh` starts it.
+Of the seven bench steps in [the specification](docs/spec.md#14-acceptance), six are done in this repository: the scenario checks, the determinism test, the fault schedule, ten power cuts (with SIGKILL as the cut), staged updates, and flood limits. The seven-day run on a bench twin is not done; `scripts/soak.sh` starts it.
 
 ## Related
 

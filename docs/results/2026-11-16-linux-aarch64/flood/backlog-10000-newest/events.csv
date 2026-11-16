@@ -1,0 +1,4 @@
+cycle,event,detail
+1,source,backlog
+1000,progress,delivered=1000 detected=0 alive=3
+1000,stopped,completed

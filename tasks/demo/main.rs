@@ -8,14 +8,19 @@
 //! end of input (the server protocol in docs/spec.md, section 3). `--once`
 //! reads one input record to end of input and writes the output, for the
 //! `cli` adapter. `--kat DIR` writes `kat.in` and `kat.out`. Test switches:
-//! `--nondeterministic` appends the process id to every output;
+//! `--nondeterministic` appends the process id to every output; `--echo`
+//! makes the output the input record itself (the flood bench reads the
+//! send time a record carries);
 //! `--big-state` returns a 100 KiB state record. `--bug KIND` makes a bad
 //! new build for the staged-update tests (docs/spec.md, section 10), on
 //! ordinary requests (not known-answer tests) of cycle N and later:
 //! `crash@N` exits, `hang@N` stops answering, `wrong@N` flips one bit of
 //! every output, `every@M` flips one bit when the input's tick is a multiple
-//! of M (a bug only some inputs reach), and `kat` gives a wrong answer to
-//! the known-answer test only.
+//! of M (a bug only some inputs reach), `kat` gives a wrong answer to
+//! the known-answer test only, and `net@N` answers correctly but also sends
+//! 100 UDP datagrams per request to `FIELD_DEMO_NET` (host:port, default
+//! 127.0.0.1:9): a build that floods a network while every output is right
+//! (docs/spec.md, section 11).
 
 use std::io::{Read, Write};
 
@@ -73,6 +78,7 @@ fn tick_of(input: &[u8]) -> u64 {
 
 struct Switches {
     nondeterministic: bool,
+    echo: bool,
     big_state: bool,
     bug: Bug,
 }
@@ -85,6 +91,7 @@ enum Bug {
     Wrong(u64),
     Every(u64),
     Kat,
+    Net(u64),
 }
 
 fn parse_bug(s: &str) -> Bug {
@@ -97,7 +104,8 @@ fn parse_bug(s: &str) -> Bug {
         "wrong" => Bug::Wrong(n),
         "every" if n > 0 => Bug::Every(n),
         "kat" => Bug::Kat,
-        _ => panic!("--bug: expected none, crash@N, hang@N, wrong@N, every@M or kat"),
+        "net" => Bug::Net(n),
+        _ => panic!("--bug: expected none, crash@N, hang@N, wrong@N, every@M, kat or net@N"),
     }
 }
 
@@ -119,11 +127,27 @@ fn apply_bug(bug: Bug, req: &protocol::Request, output: &mut [u8]) {
         },
         Bug::Wrong(n) if !kat && req.cycle >= n => flip(output),
         Bug::Every(m) if !kat && tick_of(&req.input).checked_rem(m) == Some(0) => flip(output),
+        Bug::Net(n) if !kat && req.cycle >= n => flood(),
         _ => {}
     }
 }
 
+/// The `net@N` bug: 100 datagrams to `FIELD_DEMO_NET`, every error
+/// ignored. Under `task_network = deny` the socket is refused and nothing
+/// is sent; the answer is the same either way.
+fn flood() {
+    let target = std::env::var("FIELD_DEMO_NET").unwrap_or_else(|_| "127.0.0.1:9".into());
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        for i in 0u32..100 {
+            let _ = sock.send_to(&i.to_le_bytes(), target.as_str());
+        }
+    }
+}
+
 fn answer(block: &mut [u64; BLOCK_WORDS], input: &[u8], sw: &Switches) -> Vec<u8> {
+    if sw.echo {
+        return input.to_vec();
+    }
     let mut out = compute(block, tick_of(input)).to_le_bytes().to_vec();
     if sw.nondeterministic {
         out.extend_from_slice(&std::process::id().to_le_bytes());
@@ -144,6 +168,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let sw = Switches {
         nondeterministic: args.iter().any(|a| a == "--nondeterministic"),
+        echo: args.iter().any(|a| a == "--echo"),
         big_state: args.iter().any(|a| a == "--big-state"),
         bug: args.iter().position(|a| a == "--bug").map_or(Bug::None, |i| parse_bug(&args[i + 1])),
     };
@@ -235,6 +260,7 @@ mod tests {
         assert_eq!(parse_bug("crash@500"), Bug::Crash(500));
         assert_eq!(parse_bug("every@97"), Bug::Every(97));
         assert_eq!(parse_bug("kat"), Bug::Kat);
+        assert_eq!(parse_bug("net@200"), Bug::Net(200));
         let req = |cycle, flags| protocol::Request { cycle, flags, input: 7u64.to_le_bytes().to_vec(), state: vec![] };
         let mut o = [0u8; 8];
         apply_bug(Bug::Wrong(10), &req(9, 0), &mut o);
@@ -252,7 +278,7 @@ mod tests {
 
     #[test]
     fn state_counts_requests() {
-        let sw = Switches { nondeterministic: false, big_state: false, bug: Bug::None };
+        let sw = Switches { nondeterministic: false, echo: false, big_state: false, bug: Bug::None };
         assert_eq!(next_state(&[], &sw), 1u64.to_le_bytes());
         assert_eq!(next_state(&41u64.to_le_bytes(), &sw), 42u64.to_le_bytes());
     }

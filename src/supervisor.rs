@@ -18,7 +18,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::checkpoint::{Caught, Checkpoint};
-use crate::config::{Config, OnHalt, Policy};
+use crate::config::{Backlog, Config, OnHalt, Policy, TaskNetwork};
 use crate::faults::{Fault, Kind};
 use crate::hash::reply_value;
 use crate::log::EventLog;
@@ -79,6 +79,9 @@ struct Run {
     /// Set at the stop, before the replicas are ended, for the summary.
     alive_at_end: Option<usize>,
     oracle_configured: bool,
+    /// `input_backlog = newest`: the cycle a backlog began and the records
+    /// skipped since, while it lasts.
+    backlog: Option<(u64, u64)>,
 }
 
 /// What ended a staged update's run of clean cycles.
@@ -124,7 +127,7 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
     };
 
     std::fs::create_dir_all(&cfg.dir).map_err(|e| (format!("dir {}: {e}", cfg.dir.display()), 1))?;
-    let limits = ProcessLimits { memory_mb: cfg.memory_mb };
+    let limits = ProcessLimits { memory_mb: cfg.memory_mb, deny_network: cfg.task_network == TaskNetwork::Deny };
     limits.apply();
     stop::install_handlers();
 
@@ -189,6 +192,7 @@ fn start(cfg: Config) -> Result<Run, (String, i32)> {
         halted_at: None,
         alive_at_end: None,
         oracle_configured: false,
+        backlog: None,
     };
     run.reconcile_candidate(candidate_hash);
     if run.cp.halted {
@@ -248,11 +252,21 @@ impl Run {
     /// a failure the slot is retired. `Err` only when the task (the old
     /// build) cannot be started at all at start-up.
     fn start_replica(&mut self, i: usize, reason: &str) -> Result<bool, String> {
-        let limits = ProcessLimits { memory_mb: self.cfg.memory_mb };
+        let limits =
+            ProcessLimits { memory_mb: self.cfg.memory_mb, deny_network: self.cfg.task_network == TaskNetwork::Deny };
         let task = self.task_for(i);
         let mut r = match Replica::spawn(&task, self.cfg.adapter, limits) {
             Ok(r) => r,
-            Err(e) if reason == "startup" && !self.cp.builds[i] => return Err(format!("task {}: {e}", task.display())),
+            Err(e) if reason == "startup" && !self.cp.builds[i] => {
+                // the lock is set between fork and exec: a kernel or an
+                // emulator without seccomp filters refuses it there
+                let hint = if limits.deny_network && matches!(e.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
+                    " (task_network = deny needs seccomp filters; where the kernel has none, set task_network = allow)"
+                } else {
+                    ""
+                };
+                return Err(format!("task {}: {e}{hint}", task.display()));
+            }
             Err(_) => {
                 self.retire_slot(i, reason);
                 return Ok(false);
@@ -629,6 +643,20 @@ impl Run {
             }
             Err(e) => return Flow::Stop(format!("input-error {e}"), 1),
         };
+        // 6a: with input_backlog = newest, skip what queued up behind it,
+        // reading for at most one period
+        let input = if self.cfg.input_backlog == Backlog::Newest {
+            let until = Instant::now() + Duration::from_millis(self.cfg.period_ms.max(10));
+            match self.source.newest(input, self.cfg.record_max, until) {
+                Ok((r, skipped)) => {
+                    self.note_backlog(next_cycle, skipped);
+                    r
+                }
+                Err(e) => return Flow::Stop(format!("input-error {e}"), 1),
+            }
+        } else {
+            input
+        };
         // 7
         let cycle = next_cycle;
         let cycle_start = Instant::now();
@@ -916,6 +944,23 @@ impl Run {
             nap = nap.min(d.saturating_duration_since(Instant::now()));
         }
         stop::sleep_until(Instant::now() + nap);
+    }
+
+    /// Count skipped records, and log a backlog once when it begins and once
+    /// when the source has caught up, however long it lasts.
+    fn note_backlog(&mut self, cycle: u64, skipped: u64) {
+        if skipped > 0 {
+            self.cp.skipped += skipped;
+            match self.backlog.as_mut() {
+                Some((_, n)) => *n += skipped,
+                None => {
+                    self.log.event(cycle, "source", "backlog");
+                    self.backlog = Some((cycle, skipped));
+                }
+            }
+        } else if let Some((from, n)) = self.backlog.take() {
+            self.log.event(cycle, "source", &format!("caught-up skipped={n} from={from}"));
+        }
     }
 
     /// Retire a replica mid-cycle (a failed known-answer test).
